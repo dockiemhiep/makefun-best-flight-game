@@ -2,7 +2,7 @@
 // wingtip trails and particle pools. Zero DOM or Canvas dependencies.
 
 import { FLIGHT, LANDING, M_TO_FT, MS_TO_FPM, MS_TO_KTS, RING, RUNWAY } from './config.js';
-import { RIVER_X_MAX, RIVER_X_MIN, buildCourseWorld, coastX, riverCenterZ, riverHalfWidth, terrainHeight } from './courses.js';
+import { buildCourseWorld, terrainHeight } from './courses.js';
 
 export const PHASE_TAKEOFF = 'takeoff';
 export const PHASE_COURSE = 'course';
@@ -173,7 +173,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
     state.speedSum = 0;
     state.speedSamples = 0;
     state.bannerText = 'CLEARED FOR TAKEOFF · RWY 36';
-    state.bannerSub = 'Throttle Up [W] · Rotate at 55 KTS';
+    state.bannerSub = `Throttle Up [W] · Rotate at ${Math.round(FLIGHT.rotateSpeed * MS_TO_KTS)} KTS`;
     state.bannerColor = '#7cf7c9';
     state.bannerTimer = 4.2;
     state.stallWarn = false;
@@ -209,10 +209,28 @@ export function createWorld(randomFactory, courseIndex = 0) {
     return Math.abs(x - RUNWAY.x) <= RUNWAY.width * 0.56 && z >= RUNWAY.zStart - 12 && z <= RUNWAY.zEnd + 16;
   }
 
+  function isInTdz(x, z) {
+    return z >= RUNWAY.tdzStart && z <= RUNWAY.tdzEnd && Math.abs(x - RUNWAY.x) <= RUNWAY.width * 0.5;
+  }
+
+  function inPoly(poly, x, z) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], zi = poly[i][2], xj = poly[j][0], zj = poly[j][2];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
   function waterKindAt(x, z) {
-    if (x > coastX(z) + 18) return 'sea';
-    if (x >= RIVER_X_MIN && x <= RIVER_X_MAX && Math.abs(z - riverCenterZ(x)) <= riverHalfWidth(x)) return 'river';
-    return null;
+    const c = state.course;
+    for (const s of c.riverSegments) if (inPoly(s.water, x, z)) return 'river';
+    for (const s of c.riverSegments) if (inPoly(s.bank, x, z)) return null;
+    for (const f of c.fields) if (inPoly(f.poly, x, z)) return null;
+    for (const s of c.surfStrips) if (inPoly(s, x, z)) return 'sea';
+    if (inPoly(c.landPoly, x, z) || inPoly(c.islandPoly, x, z) || inPoly(c.islandBeach, x, z)) return null;
+    for (const s of c.beachStrips) if (inPoly(s, x, z)) return null;
+    return 'sea';
   }
 
   function advanceRing(missed) {
@@ -240,7 +258,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
     const p = state.plane;
     const fpm = p.touchdownFpm;
     const onRwy = isOnRunway(p.touchdownX, p.touchdownZ);
-    const inTdz = onRwy && p.touchdownZ >= RUNWAY.tdzStart && p.touchdownZ <= RUNWAY.tdzEnd && Math.abs(p.touchdownX) <= RUNWAY.width * 0.5;
+    const inTdz = onRwy && isInTdz(p.touchdownX, p.touchdownZ);
     const avgKts = state.speedSamples > 0 ? Math.round((state.speedSum / state.speedSamples) * MS_TO_KTS) : 0;
 
     if (!onRwy) {
@@ -665,7 +683,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
             if (!onRwy) {
               showBanner('OFF-FIELD TOUCHDOWN', 'Missed Runway 36 · Hold [SPACE] to stop', '#ffb347', 3.2);
             } else {
-              const inTdz = p.z >= RUNWAY.tdzStart && p.z <= RUNWAY.tdzEnd;
+              const inTdz = isInTdz(p.x, p.z);
               const gradeTxt =
                 sinkFpm <= LANDING.butterFpm
                   ? `BUTTER TOUCHDOWN! -${Math.round(sinkFpm)} FPM`
@@ -775,7 +793,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
   }
 
   reset();
-  return { state, reset, setCourse, step, getNavTarget, stallSpeedOf };
+  return { state, reset, setCourse, step, getNavTarget, stallSpeedOf, waterKindAt };
 }
 
 export function formatKts(speedMs) {

@@ -143,10 +143,6 @@ export function coastX(z) {
   );
 }
 
-/** X-extent of the rendered Azure River channel (shared by renderer and water collision). */
-export const RIVER_X_MIN = -1700;
-export const RIVER_X_MAX = 580;
-
 /** Winding Azure River centerline Z coordinate as a function of X (flows West -> East into estuary). */
 export function riverCenterZ(x) {
   return 1180 + Math.sin(x * 0.0034 + 0.5) * 160 + Math.cos(x * 0.0072) * 55;
@@ -262,7 +258,7 @@ export function buildCourseWorld(courseIndex, random) {
   // 4. Winding Azure River segments
   const riverSegments = [];
   const riverXs = [];
-  for (let x = RIVER_X_MIN; x <= RIVER_X_MAX; x += 95) riverXs.push(x);
+  for (let x = -1700; x <= 580; x += 95) riverXs.push(x);
   for (let i = 0; i < riverXs.length - 1; i += 1) {
     const x0 = riverXs[i], x1 = riverXs[i + 1], z0 = riverCenterZ(x0), z1 = riverCenterZ(x1);
     const w0 = riverHalfWidth(x0), w1 = riverHalfWidth(x1);
