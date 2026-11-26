@@ -2,7 +2,7 @@
 // wingtip trails and particle pools. Zero DOM or Canvas dependencies.
 
 import { FLIGHT, LANDING, M_TO_FT, MS_TO_FPM, MS_TO_KTS, RING, RUNWAY } from './config.js';
-import { buildCourseWorld, coastX, riverCenterZ, riverHalfWidth, terrainHeight } from './courses.js';
+import { RIVER_X_MAX, RIVER_X_MIN, buildCourseWorld, coastX, riverCenterZ, riverHalfWidth, terrainHeight } from './courses.js';
 
 export const PHASE_TAKEOFF = 'takeoff';
 export const PHASE_COURSE = 'course';
@@ -211,7 +211,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
 
   function waterKindAt(x, z) {
     if (x > coastX(z) + 18) return 'sea';
-    if (x >= -1700 && x <= 620 && Math.abs(z - riverCenterZ(x)) <= riverHalfWidth(x)) return 'river';
+    if (x >= RIVER_X_MIN && x <= RIVER_X_MAX && Math.abs(z - riverCenterZ(x)) <= riverHalfWidth(x)) return 'river';
     return null;
   }
 

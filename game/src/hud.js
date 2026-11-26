@@ -802,18 +802,22 @@ export function drawSummaryOverlay(ctx, state, bestScore, isNewRecord) {
   if (crashed || offField) {
     ctx.textAlign = 'left';
     const rep = state.landingReport;
-    ctx.font = `600 15px ${FONT}`;
-    ctx.fillStyle = offField ? '#ffd699' : '#ffb4ab';
-    ctx.fillText(
-      offField
-        ? `Set down off-runway (${rep.centerOffset}m off RWY 36, -${rep.fpm} FPM) — land on Runway 36 to complete!`
-        : state.crashReason || 'Aircraft lost during flight.',
-      x + 28,
-      y + 122,
-    );
-    ctx.font = `600 13.5px ${MONO}`; ctx.fillStyle = '#c8dff0';
-    ctx.fillText(`RINGS CLEARED: ${state.ringsHit} / ${state.course.rings.length}  ·  TIME: ${fmtClock(state.flightTime)}`, x + 28, y + 162);
-    ctx.fillText(`RING SCORE: ${state.totalScore}  ·  BEST STREAK: ×${state.bestStreak}  ·  0/3 STARS`, x + 28, y + 194);
+    const maxW = w - 56;
+    if (offField) {
+      ctx.font = `600 14.5px ${FONT}`; ctx.fillStyle = '#ffd699';
+      ctx.fillText(`Set down off-runway (${rep.centerOffset}m off RWY 36 · -${rep.fpm} FPM).`, x + 28, y + 114, maxW);
+      ctx.font = `500 13.5px ${FONT}`; ctx.fillStyle = '#d4e6f5';
+      ctx.fillText('Mission requires a runway landing — touch down on Runway 36 to complete.', x + 28, y + 137, maxW);
+      ctx.font = `600 13.5px ${MONO}`; ctx.fillStyle = '#c8dff0';
+      ctx.fillText(`RINGS CLEARED: ${state.ringsHit} / ${state.course.rings.length}  ·  TIME: ${fmtClock(state.flightTime)}`, x + 28, y + 174);
+      ctx.fillText(`RING SCORE: ${state.totalScore}  ·  BEST STREAK: ×${state.bestStreak}  ·  0/3 STARS`, x + 28, y + 204);
+    } else {
+      ctx.font = `600 15px ${FONT}`; ctx.fillStyle = '#ffb4ab';
+      ctx.fillText(state.crashReason || 'Aircraft lost during flight.', x + 28, y + 122, maxW);
+      ctx.font = `600 13.5px ${MONO}`; ctx.fillStyle = '#c8dff0';
+      ctx.fillText(`RINGS CLEARED: ${state.ringsHit} / ${state.course.rings.length}  ·  TIME: ${fmtClock(state.flightTime)}`, x + 28, y + 162);
+      ctx.fillText(`RING SCORE: ${state.totalScore}  ·  BEST STREAK: ×${state.bestStreak}  ·  0/3 STARS`, x + 28, y + 194);
+    }
   } else {
     const rep = state.landingReport;
     const rows = [

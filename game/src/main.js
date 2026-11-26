@@ -157,6 +157,13 @@ function runGame() {
     );
   }
 
+  function resumeFlight() {
+    input.clearFlightQueue();
+    accumulator = 0;
+    screen = SCREEN_PLAY;
+    announce('Flight resumed.');
+  }
+
   function handleActions() {
     const actions = input.takeActions();
     const coursePick = input.takeCoursePick();
@@ -188,7 +195,7 @@ function runGame() {
       } else if (screen === SCREEN_OVER) {
         startFlight();
       } else if (screen === SCREEN_PAUSED) {
-        screen = SCREEN_PLAY;
+        resumeFlight();
       }
     }
 
@@ -198,8 +205,7 @@ function runGame() {
     }
     if (screen === SCREEN_PAUSED) {
       if (actions & (ACT_PAUSE | ACT_CONFIRM)) {
-        screen = SCREEN_PLAY;
-        announce('Flight resumed.');
+        resumeFlight();
       } else if (actions & ACT_RESTART) {
         startFlight();
       } else if (actions & ACT_TITLE) {
@@ -301,6 +307,7 @@ function runGame() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && screen === SCREEN_PLAY) {
+      input.clearFlightQueue();
       screen = SCREEN_PAUSED;
       announce('Flight paused.');
     }
