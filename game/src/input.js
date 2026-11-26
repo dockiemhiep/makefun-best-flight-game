@@ -1,53 +1,90 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Keyboard & pointer input for SKYWARD RINGS.
+// Continuous flight surfaces (pitch, roll, throttle, brake) + one-shot system triggers.
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+export const ACT_CONFIRM = 1;
+export const ACT_PAUSE = 2;
+export const ACT_GEAR = 4;
+export const ACT_FLAPS = 8;
+export const ACT_CAM = 16;
+export const ACT_INVERT = 32;
+export const ACT_MUTE = 64;
+export const ACT_RESTART = 128;
+export const ACT_TITLE = 256;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
+export function createInput(canvas, clientToLogical) {
+  const held = new Set();
   let actions = 0;
+  let coursePick = -1;
+  let pointerClick = null;
 
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+  const preventKeys = new Set([
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'Space', 'KeyW', 'KeyS', 'KeyA', 'KeyD',
+  ]);
+
+  window.addEventListener('keydown', (e) => {
+    if (preventKeys.has(e.code)) e.preventDefault();
+    held.add(e.code);
+    if (e.repeat) return;
+
+    if (e.code === 'Space' || e.code === 'Enter') actions |= ACT_CONFIRM;
+    else if (e.code === 'KeyP' || e.code === 'Escape') actions |= ACT_PAUSE;
+    else if (e.code === 'KeyG') actions |= ACT_GEAR;
+    else if (e.code === 'KeyF') actions |= ACT_FLAPS;
+    else if (e.code === 'KeyC') actions |= ACT_CAM;
+    else if (e.code === 'KeyI') actions |= ACT_INVERT;
+    else if (e.code === 'KeyM') actions |= ACT_MUTE;
+    else if (e.code === 'KeyR') actions |= ACT_RESTART;
+    else if (e.code === 'KeyT') actions |= ACT_TITLE;
+    else if (e.code === 'Digit1') coursePick = 0;
+    else if (e.code === 'Digit2') coursePick = 1;
+    else if (e.code === 'Digit3') coursePick = 2;
   });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+
+  window.addEventListener('keyup', (e) => {
+    held.delete(e.code);
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
+
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    held.clear();
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    pointerClick = clientToLogical(e.clientX, e.clientY);
   });
 
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
+    readFlight(invertPitch) {
+      const up = held.has('ArrowUp');
+      const down = held.has('ArrowDown');
+      const left = held.has('ArrowLeft') || held.has('KeyA');
+      const right = held.has('ArrowRight') || held.has('KeyD');
+      const thrUp = held.has('KeyW') || held.has('ShiftLeft') || held.has('ShiftRight') || held.has('Equal');
+      const thrDn = held.has('KeyS') || held.has('ControlLeft') || held.has('ControlRight') || held.has('Minus');
+      const brake = held.has('Space') || held.has('KeyB');
+
+      const rawPitch = (up ? 1 : 0) - (down ? 1 : 0);
+      return {
+        pitch: invertPitch ? -rawPitch : rawPitch,
+        roll: (right ? 1 : 0) - (left ? 1 : 0),
+        throttleDelta: (thrUp ? 1 : 0) - (thrDn ? 1 : 0),
+        brake,
+      };
     },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
     takeActions() {
-      const taken = actions;
+      const a = actions;
       actions = 0;
-      return taken;
+      return a;
+    },
+    takeCoursePick() {
+      const c = coursePick;
+      coursePick = -1;
+      return c;
+    },
+    takePointerClick() {
+      const p = pointerClick;
+      pointerClick = null;
+      return p;
     },
   };
 }

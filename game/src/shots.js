@@ -1,79 +1,143 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Deterministic autopilot & screenshot staging for ?shot=title|chase|approach|results.
+// Every staged frame is produced exclusively by stepping the real flight simulation
+// with identical player inputs — zero hand-placed states and zero faked HUD numbers.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { FLIGHT, RUNWAY, STEP } from './config.js';
+import {
+  EVT_COMPLETE,
+  EVT_CRASH,
+  PHASE_APPROACH,
+  PHASE_COURSE,
+  PHASE_ROLLOUT,
+  PHASE_TAKEOFF,
+  angleDiff,
+} from './world.js';
+import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './hud.js';
+import { syncCameraToPlane } from './camera.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function clamp(v, lo, hi) {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+/** Smooth proportional flight autopilot driving the exact same control surface inputs a player uses. */
+export function computeAutopilot(world) {
+  const state = world.state;
+  const p = state.plane;
+  const ctrl = { pitch: 0, roll: 0, throttleSet: 0.85, brake: false, toggleGear: false, cycleFlaps: false };
+
+  if (state.phase === PHASE_TAKEOFF) {
+    ctrl.throttleSet = 1.0;
+    const hdgErr = angleDiff(0, p.yaw);
+    ctrl.roll = clamp(hdgErr * 2.5, -0.5, 0.5);
+    if (p.speed >= FLIGHT.rotateSpeed + 2) ctrl.pitch = 0.82;
+    return ctrl;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
+
+  if (state.phase === PHASE_ROLLOUT) {
+    ctrl.throttleSet = 0;
+    ctrl.brake = true;
+    const hdgErr = angleDiff(0, p.yaw) - p.x * 0.008;
+    ctrl.roll = clamp(hdgErr * 1.8, -0.6, 0.6);
+    return ctrl;
+  }
+
+  if (state.phase === PHASE_COURSE) {
+    if (p.gearDown && p.y > 26) ctrl.toggleGear = true;
+    const r = state.course.rings[state.activeRing];
+    if (!r) return ctrl;
+
+    const dx = r.x - p.x;
+    const dy = r.y - p.y;
+    const dz = r.z - p.z;
+    const horiz = Math.hypot(dx, dz) || 1;
+    const yawErr = angleDiff(Math.atan2(dx, dz), p.yaw);
+    const desiredRoll = clamp(yawErr * 1.85, -0.78, 0.78);
+    ctrl.roll = clamp((desiredRoll - p.roll) * 4.2, -1, 1);
+
+    const desiredPitch = clamp(Math.atan2(dy, Math.max(45, horiz)) * 1.25 + (1 - Math.cos(p.roll)) * 0.14, -0.34, 0.36);
+    ctrl.pitch = clamp((desiredPitch - p.pitch) * 5.0, -1, 1);
+    ctrl.throttleSet = state.activeRing >= state.course.rings.length - 2 ? 0.62 : 0.88;
+    return ctrl;
+  }
+
+  if (state.phase === PHASE_APPROACH) {
+    if (!p.gearDown) ctrl.toggleGear = true;
+    else if (p.flaps < 2 && p.speed < 44) ctrl.cycleFlaps = true;
+
+    const aimZ = RUNWAY.aimZ - 26;
+    const distZ = Math.max(10, aimZ - p.z);
+    const windCrab = -Math.atan2(state.course.def.windX, Math.max(20, p.speed));
+    const interceptX = clamp(-p.x * 0.011, -0.34, 0.34);
+    const yawErr = angleDiff(interceptX + windCrab, p.yaw);
+    const desiredRoll = clamp(yawErr * 1.75, -0.4, 0.4);
+    ctrl.roll = clamp((desiredRoll - p.roll) * 4.5, -1, 1);
+
+    const idealY = Math.max(0, Math.tan((RUNWAY.glideslopeDeg * Math.PI) / 180) * distZ);
+    let desiredPitch;
+    if (p.y < 4.3 && p.z > 5) {
+      ctrl.throttleSet = 0.0;
+      const targetVy = p.y > 1.6 ? -0.75 : -0.44;
+      desiredPitch = clamp((targetVy - p.vy) * 0.11 + 0.008, -0.04, 0.1);
+    } else {
+      const altErr = idealY - p.y;
+      desiredPitch = clamp(-0.095 + altErr * 0.014, -0.22, 0.08);
+      const targetSpd = p.z > -160 ? 22.4 : 28.0;
+      ctrl.throttleSet = clamp(0.24 + (targetSpd - p.speed) * 0.055, 0.0, 0.72);
     }
+    ctrl.pitch = clamp((desiredPitch - p.pitch) * 6.4, -1, 1);
+    return ctrl;
   }
-  return best;
+
+  return ctrl;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+/** Step the real simulation forward to stage `title`, `chase`, `approach`, or `results`. */
+export function stageShot(name, world, cam) {
+  world.setCourse(0);
+
+  if (name === 'chase' || name === 'play') {
+    // Money frame: real takeoff -> Ring 1 cleared -> banking smoothly toward Ring 2 (River Estuary)
+    // over Pelican Harbor small town, winding river, patchwork fields, lighthouse & coastline!
+    for (let steps = 0; steps < 60 * 35; steps += 1) {
+      world.step(STEP, computeAutopilot(world));
+      syncCameraToPlane(cam, world.state.plane, STEP);
+      if (world.state.activeRing === 1 && world.state.plane.z > 840) break;
+    }
+    return { screen: SCREEN_PLAY, bestScore: world.state.totalScore, isNewRecord: false };
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+
+  if (name === 'approach') {
+    // Full real loop through all 12 rings onto final approach for Runway 36 (on glideslope, gear & flaps down)
+    for (let steps = 0; steps < 60 * 165; steps += 1) {
+      const ev = world.step(STEP, computeAutopilot(world));
+      syncCameraToPlane(cam, world.state.plane, STEP);
+      if (ev & (EVT_COMPLETE | EVT_CRASH)) break;
+      if (world.state.phase === PHASE_APPROACH && world.state.plane.z > -195 && world.state.plane.z < -115 && world.state.plane.gearAnim > 0.9) {
+        break;
+      }
+    }
+    return { screen: SCREEN_PLAY, bestScore: world.state.totalScore, isNewRecord: false };
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+
+  if (name === 'results' || name === 'end') {
+    // Full real flight from takeoff through all 12 rings to Touchdown Zone landing & rollout stop!
+    for (let steps = 0; steps < 60 * 195; steps += 1) {
+      const ev = world.step(STEP, computeAutopilot(world));
+      syncCameraToPlane(cam, world.state.plane, STEP);
+      if (ev & (EVT_COMPLETE | EVT_CRASH)) break;
+    }
+    return {
+      screen: SCREEN_OVER,
+      bestScore: world.state.totalScore,
+      isNewRecord: true,
+    };
+  }
+
+  // Default ('title' / 'start'): real takeoff & climb toward Ring 1 over Runway 36, town, river, fields & lighthouse
+  for (let steps = 0; steps < 60 * 15; steps += 1) {
+    world.step(STEP, computeAutopilot(world));
+    syncCameraToPlane(cam, world.state.plane, STEP);
+    if (world.state.plane.z > 475) break;
+  }
+  return { screen: SCREEN_TITLE, bestScore: 0, isNewRecord: false };
 }
