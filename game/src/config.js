@@ -1,6 +1,3 @@
-// Central tuning, flight physics constants, HUD geometry, and course palettes.
-// Logical viewport is 1280x720; renderer scales cleanly with devicePixelRatio.
-
 export const VIEW = {
   width: 1280,
   height: 720,
@@ -82,32 +79,32 @@ export const LANDING = {
 export const THEMES = {
   morning: {
     id: 'morning',
-    skyTop: '#1b5fa8',
-    skyMid: '#5aa6e0',
-    skyHorizon: '#d9eef7',
-    sunColor: '#fff7d6',
-    sunHalo: 'rgba(255, 240, 185, 0.34)',
-    sunAzimuth: 0.88,
-    sunElevation: 0.34,
-    seaDeep: '#155c8a',
-    seaNear: '#2181ab',
-    seaHorizon: '#8fc8de',
-    landBase: '#5d934c',
-    landFar: '#7fa878',
-    beach: '#e6d3a3',
+    skyTop: '#192f58',
+    skyMid: '#626d98',
+    skyHorizon: '#ffd0a0',
+    sunColor: '#fff0b6',
+    sunHalo: 'rgba(255, 166, 102, 0.34)',
+    sunAzimuth: 0.22,
+    sunElevation: 0.105,
+    seaDeep: '#164e60',
+    seaNear: '#43878e',
+    seaHorizon: '#cdaaad',
+    landBase: '#68794a',
+    landFar: '#ac9a62',
+    beach: '#d0aa76',
     surf: 'rgba(244, 252, 255, 0.72)',
-    riverDeep: '#1d71a0',
-    riverShallow: '#48a4c6',
-    mountainFar: '#6b94b4',
-    mountainNear: '#4d7c96',
-    cloudTop: '#ffffff',
-    cloudShadow: '#bfd3e6',
-    haze: 'rgba(205, 232, 246, 0.42)',
-    ringActive: '#ffd24d',
+    riverDeep: '#306478',
+    riverShallow: '#528b92',
+    mountainFar: '#9b8393',
+    mountainNear: '#635b7d',
+    cloudTop: '#ffe6bf',
+    cloudShadow: '#9890ac',
+    haze: 'rgba(255, 196, 143, 0.26)',
+    ringActive: '#ffbb44',
     ringActiveGlow: 'rgba(255, 206, 74, 0.42)',
-    ringNext: '#63e2ff',
+    ringNext: '#86efe4',
     ringDone: '#5be38c',
-    hud: '#69f7c4',
+    hud: '#a6ffdc',
     hudDim: 'rgba(105, 247, 196, 0.52)',
   },
   challenge: {
@@ -173,7 +170,7 @@ export const THEMES = {
 };
 
 export const FIELD_COLORS = {
-  morning: ['#d8b95b', '#669d49', '#7caa58', '#96724c', '#4f7d41', '#c7b856', '#729452', '#a88a56'],
+  morning: ['#bfa459', '#828c51', '#a5a05e', '#986d49', '#587249', '#b3a264', '#7d8650', '#b58d5c'],
   challenge: ['#cbb05a', '#558b47', '#6c9952', '#876847', '#426e3c', '#b7aa54', '#63854c', '#987c4e'],
   sunset: ['#a88043', '#4e733b', '#627d42', '#73533b', '#3b5933', '#9e8442', '#576c3f', '#826342'],
 };

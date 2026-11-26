@@ -1,8 +1,3 @@
-// Handcrafted coastal courses and scenic world geography:
-// coastline peninsula, beach & surf, winding Azure River & estuary,
-// patchwork agricultural fields, Pelican Point Lighthouse, arched bridge,
-// airfield tower/hangar/windsock, barns, wind turbines, pine groves, sailboats & clouds.
-
 import { FIELD_COLORS, RUNWAY, THEMES } from './config.js';
 
 /** Build rings with automatically computed forward tangent headings along the closed loop. */
@@ -129,10 +124,7 @@ export const COURSE_DEFS = [
   },
 ];
 
-/**
- * Coastline X coordinate as a function of Z: west of this curve is lush land, east is turquoise ocean.
- * Creates dramatic coves, the Pelican Point lighthouse headland, and a wide bay.
- */
+// West of coastX(z) is land.
 export function coastX(z) {
   return (
     410 +
@@ -143,12 +135,10 @@ export function coastX(z) {
   );
 }
 
-/** Winding Azure River centerline Z coordinate as a function of X (flows West -> East into estuary). */
 export function riverCenterZ(x) {
   return 1180 + Math.sin(x * 0.0034 + 0.5) * 160 + Math.cos(x * 0.0072) * 55;
 }
 
-/** Half-width of the rendered Azure River channel at world X (meters). */
 export function riverHalfWidth(x) {
   return x > 180 ? 54 + (x - 180) * 0.22 : 46 + Math.sin(x * 0.004) * 10;
 }
@@ -172,13 +162,11 @@ export function terrainHeight(x, z) {
   return Math.max(0, h);
 }
 
-/** Generate complete scenic terrain polygons, river segments, patchwork fields, and 3D landmarks. */
 export function buildCourseWorld(courseIndex, random) {
   const def = COURSE_DEFS[courseIndex] ?? COURSE_DEFS[0];
   const theme = def.theme;
   const fieldPalette = FIELD_COLORS[theme.id] ?? FIELD_COLORS.morning;
 
-  // 1. Main peninsula / mainland terrain polygon + sandy beach ribbon + surf band
   const coastSamples = [];
   for (let z = -1900; z <= 2300; z += 110) {
     coastSamples.push([coastX(z), z]);
@@ -187,7 +175,6 @@ export function buildCourseWorld(courseIndex, random) {
   for (let i = 0; i < coastSamples.length; i += 1) {
     landPoly.push([coastSamples[i][0], 0, coastSamples[i][1]]);
   }
-  // Close land far to the West
   landPoly.push([-2400, 0, 2300], [-2400, 0, -1900]);
 
   const beachStrips = [];
@@ -209,7 +196,6 @@ export function buildCourseWorld(courseIndex, random) {
     ]);
   }
 
-  // 2. Offshore rocky islet with tiny beach near Turquoise Bay
   const islandCenter = { x: 1090, z: 1060 };
   const islandPoly = [];
   const islandBeach = [];
@@ -220,7 +206,6 @@ export function buildCourseWorld(courseIndex, random) {
     islandBeach.push([islandCenter.x + Math.cos(a) * (r + 18), 0, islandCenter.z + Math.sin(a) * (r + 18) * 1.2]);
   }
 
-  // 3. Patchwork agricultural fields across West, South, Approach corridor & North-West valley
   const fields = [];
   const gridCols = [-1450, -1160, -880, -610, -350, -120, 75, 290, 480];
   const gridRows = [-1160, -880, -610, -360, -140, 80, 320, 560, 820, 1460, 1740];
@@ -255,7 +240,6 @@ export function buildCourseWorld(courseIndex, random) {
     }
   }
 
-  // 4. Winding Azure River segments
   const riverSegments = [];
   const riverXs = [];
   for (let x = -1700; x <= 580; x += 95) riverXs.push(x);
@@ -269,7 +253,6 @@ export function buildCourseWorld(courseIndex, random) {
     });
   }
 
-  // 5. 3D Landmarks
   const props = [];
   const lhZ = 1265, lhX = coastX(lhZ) - 18;
   props.push({ type: 'lighthouse', x: lhX, y: 0, z: lhZ, scale: 1.15 });
@@ -284,6 +267,22 @@ export function buildCourseWorld(courseIndex, random) {
     props.push({ type: 'house', x: hx, y: 0, z: hz, scale: 0.85 + (i % 3) * 0.16, roof: roofs[i % roofs.length] });
   });
   props.push({ type: 'steeple', x: 268, y: 0, z: 985, scale: 1.1 });
+
+  for (let row = 0; row < 5; row += 1) {
+    for (let lot = 0; lot < 7; lot += 1) {
+      const x = 129 + lot * 45 + (row * 17 + lot * 7) % 19;
+      const z = 854 + row * 49 + (lot * 13 % 17);
+      if (props.some(prop => Math.hypot(prop.x - x, prop.z - z) < 24)) continue;
+      props.push({ type: 'house', x, y: 0, z, scale: 0.78 + (lot * 3 + row) % 5 * 0.13, roof: roofs[(lot + row * 2) % roofs.length] });
+    }
+  }
+  for (let i = 0; i < 24; i += 1) {
+    const z = 876 + i * 9, x = 427 + i % 3 * 13;
+    props.push({ type: 'tree', x, y: 0, z, tint: i % 2, scale: 0.55 + (i * 3 % 5) * 0.12 });
+  }
+  for (const [x, z] of [[-130, 58], [-130, 131], [-145, 282], [136, 50], [151, 88], [120, 292]]) {
+    props.push({ type: 'tree', x, y: 0, z, tint: 0.5, scale: 0.7 });
+  }
 
   [[-1480,1540,1.45],[-1440,1120,1.3],[-1500,680,1.5],[-1460,180,1.35],[-1420,-340,1.25],[-960,2180,1.4],[-480,2240,1.55],[-40,2200,1.35],[240,2140,1.15]].forEach(([mx, mz, sc]) => {
     props.push({ type: 'mountain', x: mx, y: 0, z: mz, scale: sc });

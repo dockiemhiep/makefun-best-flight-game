@@ -1,10 +1,5 @@
-// 2.5D perspective world renderer: dynamic banking sky/ocean horizon, coastline,
-// surf, winding Azure River, patchwork fields, Runway 36 with PAPI & touchdown zone,
-// depth-sorted 3D landmarks (lighthouse, bridge, tower, barns, windmills, trees, boats, clouds),
-// glowing 3D target rings, hero multi-part aircraft with animated surfaces & trails.
-
 import { RING, RUNWAY, VIEW } from './config.js';
-import { projectPolygon, projectWorld } from './camera.js';
+import { projectPolygon, projectWorld, updateCameraBasis } from './camera.js';
 import {
   SCREEN_OVER,
   SCREEN_PAUSED,
@@ -15,7 +10,7 @@ import {
   drawSummaryOverlay,
   drawTitleOverlay,
 } from './hud.js';
-import { PHASE_APPROACH, PHASE_ROLLOUT } from './world.js';
+import { PHASE_APPROACH, PHASE_COMPLETE, PHASE_ROLLOUT } from './world.js';
 
 const _polyOut = new Float64Array(128);
 const _pA = { x: 0, y: 0, scale: 1, cz: 0 };
@@ -75,33 +70,59 @@ export function createRenderer(canvas) {
     };
   }
 
-  // ---------------------------------------------------------------- Sky, Sun & Sea Horizon
   function drawSkyAndSea(cam, course, time) {
-    const t = course.theme;
-    const horY = Math.tan(cam.pitch) * VIEW.focal;
-    const span = 1850;
-
+    const t = course.theme, horY = Math.tan(cam.pitch) * VIEW.focal, span = 1850;
+    const sunDelta = ((t.sunAzimuth - cam.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const sunX = Math.tan(sunDelta) * VIEW.focal;
     ctx.save();
     ctx.translate(VIEW.horizonX + cam.shakeX, VIEW.horizonY + cam.shakeY);
     ctx.rotate(-cam.roll);
 
-    // Sky gradient
-    const skyG = ctx.createLinearGradient(0, horY - 620, 0, horY + 10);
-    skyG.addColorStop(0, t.skyTop);
-    skyG.addColorStop(0.58, t.skyMid);
-    skyG.addColorStop(1, t.skyHorizon);
-    ctx.fillStyle = skyG;
+    const sky = ctx.createLinearGradient(0, horY - 455, 0, horY + 2);
+    sky.addColorStop(0, t.skyTop);
+    sky.addColorStop(0.47, t.skyMid);
+    sky.addColorStop(0.79, t.id === 'morning' ? '#bc889c' : t.skyMid);
+    sky.addColorStop(0.94, t.skyHorizon);
+    sky.addColorStop(1, t.sunColor);
+    ctx.fillStyle = sky;
     ctx.fillRect(-span, horY - span, span * 2, span + 6);
 
-    // Ocean base gradient below horizon
-    const seaG = ctx.createLinearGradient(0, horY, 0, horY + 540);
-    seaG.addColorStop(0, t.seaHorizon);
-    seaG.addColorStop(0.18, t.seaNear);
-    seaG.addColorStop(1, t.seaDeep);
-    ctx.fillStyle = seaG;
-    ctx.fillRect(-span, horY - 1, span * 2, span);
+    if (Math.abs(sunDelta) < 1.2) {
+      const sunY = horY - Math.tan(t.sunElevation) * VIEW.focal / Math.cos(sunDelta);
+      const glow = ctx.createRadialGradient(sunX, sunY, 14, sunX, sunY, 310);
+      glow.addColorStop(0, '#fff3c4');
+      glow.addColorStop(0.13, 'rgba(255,209,136,0.72)');
+      glow.addColorStop(0.46, t.sunHalo);
+      glow.addColorStop(1, 'rgba(255,160,96,0)');
+      ctx.fillStyle = glow; ctx.fillRect(sunX - 310, sunY - 310, 620, 620);
+      ctx.fillStyle = '#fffae1';
+      ctx.beginPath(); ctx.arc(sunX, sunY, 25, 0, Math.PI * 2); ctx.fill();
+    }
 
-    // Distant coastal mountain silhouettes parallaxing with camera yaw
+    // Two cirrus bands slide against the horizon at different rates as the camera turns.
+    for (let i = 0; i < 20; i += 1) {
+      const high = i % 2, drift = cam.yaw / (2 * Math.PI) * (high ? 4800 : 2400);
+      const x = ((i * 317 - drift + time * (high ? 1.1 : 0.4)) % 2400 + 2400) % 2400 - 1200;
+      const y = horY - (high ? 150 : 43) - (i * 41 % 71);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-0.08 - (i % 3) * 0.04);
+      ctx.scale(1, high ? 0.12 : 0.058);
+      const w = 83 + (i * 39 % 105), haze = ctx.createRadialGradient(0, 0, 0, 0, 0, w);
+      haze.addColorStop(0, high ? 'rgba(255,205,185,0.40)' : 'rgba(255,229,194,0.70)');
+      haze.addColorStop(0.55, 'rgba(255,201,173,0.24)');
+      haze.addColorStop(1, 'rgba(255,201,173,0)');
+      ctx.fillStyle = haze; ctx.fillRect(-w, -w, w * 2, w * 2);
+      ctx.restore();
+    }
+
+    const sea = ctx.createLinearGradient(0, horY, 0, horY + 385);
+    sea.addColorStop(0, t.seaHorizon);
+    sea.addColorStop(0.22, t.seaNear);
+    sea.addColorStop(1, t.seaDeep);
+    ctx.fillStyle = sea; ctx.fillRect(-span, horY - 1, span * 2, span);
+    drawWaterLight(cam, horY, sunX, Math.abs(sunDelta) < 1.2, time);
+
     const ridge = course.horizonRidge;
     const pxPerRad = VIEW.focal;
     for (let layer = 0; layer < 2; layer += 1) {
@@ -127,96 +148,67 @@ export function createRenderer(canvas) {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-
-    // Shimmering sun reflection path on the ocean surface
-    let sunDelta = ((t.sunAzimuth - cam.yaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    if (Math.abs(sunDelta) < 1.35) {
-      const sunScreenX = sunDelta * VIEW.focal;
-      ctx.fillStyle = t.sunHalo;
-      for (let i = 0; i < 14; i += 1) {
-        const yOff = horY + 8 + i * i * 2.4;
-        const w = 22 + i * 11 + Math.sin(time * 2.8 + i * 1.3) * 12;
-        ctx.globalAlpha = Math.max(0.05, 0.32 - i * 0.02);
-        ctx.fillRect(sunScreenX - w / 2, yOff, w, 3 + i * 0.35);
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    // Soft atmospheric horizon haze band
-    const hazeG = ctx.createLinearGradient(0, horY - 34, 0, horY + 38);
-    hazeG.addColorStop(0, 'rgba(255,255,255,0)');
-    hazeG.addColorStop(0.5, t.haze);
-    hazeG.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = hazeG;
-    ctx.fillRect(-span, horY - 34, span * 2, 72);
-
+    const mist = ctx.createLinearGradient(0, horY - 10, 0, horY + 16);
+    mist.addColorStop(0, 'transparent');
+    mist.addColorStop(0.4, t.haze);
+    mist.addColorStop(1, 'transparent');
+    ctx.fillStyle = mist; ctx.fillRect(-span, horY - 10, span * 2, 26);
     ctx.restore();
-
-    // True 3D-projected Solar Disc & Corona
-    const sDist = 9000;
-    const sunX = cam.x + Math.sin(t.sunAzimuth) * Math.cos(t.sunElevation) * sDist;
-    const sunY = cam.y + Math.sin(t.sunElevation) * sDist;
-    const sunZ = cam.z + Math.cos(t.sunAzimuth) * Math.cos(t.sunElevation) * sDist;
-    if (projectWorld(cam, sunX, sunY, sunZ, _pA)) {
-      const g = ctx.createRadialGradient(_pA.x, _pA.y, 10, _pA.x, _pA.y, 130);
-      g.addColorStop(0, t.sunColor);
-      g.addColorStop(0.24, t.sunHalo);
-      g.addColorStop(1, 'rgba(255,240,180,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(_pA.x, _pA.y, 130, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#fffef2';
-      ctx.beginPath();
-      ctx.arc(_pA.x, _pA.y, 24, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
-  // ---------------------------------------------------------------- Perspective Ground World
+  function drawWaterLight(cam, horY, sunX, sunVisible, time) {
+    ctx.beginPath();
+    for (let i = 0; i < 190; i += 1) {
+      const depth = (i * 73 % 191) / 190;
+      const offset = cam.x * depth * 0.07 + cam.yaw / (2 * Math.PI) * 1800;
+      const x = ((i * 719 - offset) % 1800 + 1800) % 1800 - 900;
+      const y = horY + 7 + depth ** 2 * 465;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 2 + depth * (5 + i % 23), y);
+    }
+    ctx.strokeStyle = 'rgba(186,232,220,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+    if (!sunVisible) return;
+
+    ctx.beginPath();
+    for (let i = 0; i < 105; i += 1) {
+      const depth = (i * 43 % 107) / 106, spread = 36 + depth * 244;
+      const x = sunX + ((i * 277 % 109) / 54 - 1) * spread;
+      const y = horY + 3 + depth ** 2 * 435 + Math.sin(time * 1.2 + i) * depth * 2;
+      const w = 4 + depth * (4 + i % 30);
+      ctx.moveTo(x - w, y); ctx.lineTo(x + w, y);
+    }
+    ctx.strokeStyle = 'rgba(255,194,124,0.27)'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,235,178,0.50)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+
   function drawGroundWorld(cam, state) {
     const course = state.course;
     const t = course.theme;
     const time = state.time;
 
-    // 1. Coastal peninsula landmass + offshore islet
-    fillPoly(ctx, cam, course.landPoly, t.landBase);
+    const land = ctx.createLinearGradient(0, 250, 0, 594);
+    land.addColorStop(0, t.landFar);
+    land.addColorStop(1, t.landBase);
+    fillPoly(ctx, cam, course.landPoly, land);
     fillPoly(ctx, cam, course.islandBeach, t.beach);
-    fillPoly(ctx, cam, course.islandPoly, t.landBase);
+    fillPoly(ctx, cam, course.islandPoly, land);
 
-    // 2. Golden sandy beach ribbon & animated white ocean surf foam
-    for (let i = 0; i < course.beachStrips.length; i += 1) {
-      fillPoly(ctx, cam, course.beachStrips[i], t.beach);
-    }
-    const surfAlpha = 0.56 + 0.16 * Math.sin(time * 2.2);
-    ctx.save();
-    ctx.globalAlpha = surfAlpha;
-    for (let i = 0; i < course.surfStrips.length; i += 1) {
-      fillPoly(ctx, cam, course.surfStrips[i], t.surf);
-    }
-    ctx.restore();
-
-    // 3. Patchwork agricultural fields with hedgerow borders & plowed furrow strips
-    const hedgeColor = t.id === 'sunset' ? 'rgba(34, 52, 29, 0.5)' : 'rgba(54, 88, 42, 0.45)';
-    for (let i = 0; i < course.fields.length; i += 1) {
-      const f = course.fields[i];
-      if (fillPoly(ctx, cam, f.poly, f.color, hedgeColor, 1.1) && f.stripe) {
-        // Subtle plowed crop furrow bands inside field
-        const [a, b, c, d] = f.poly;
-        for (const u of [0.25, 0.5, 0.75]) {
-          const p0 = [a[0] + (d[0] - a[0]) * u, 0, a[2] + (d[2] - a[2]) * u];
-          const p1 = [b[0] + (c[0] - b[0]) * u, 0, b[2] + (c[2] - b[2]) * u];
-          if (projectWorld(cam, p0[0], 0, p0[2], _pA) && projectWorld(cam, p1[0], 0, p1[2], _pB)) {
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-            ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(_pA.x, _pA.y); ctx.lineTo(_pB.x, _pB.y); ctx.stroke();
-          }
-        }
+    for (const strip of course.beachStrips) fillPoly(ctx, cam, strip, t.beach);
+    for (const [a, b, c, d] of course.surfStrips) {
+      fillPoly(ctx, cam, [a, b, c, d], 'rgba(116,194,174,0.43)');
+      for (let wave = 0; wave < 2; wave += 1) {
+        const u = 5 + wave * 13 + 3 * Math.sin(time * 1.7 + a[2] * 0.014 + wave);
+        fillPoly(ctx, cam, [[a[0] + u, 0, a[2]], [a[0] + u + 2.2, 0, a[2]],
+          [d[0] + u + 3.8, 0, d[2]], [d[0] + u, 0, d[2]]],
+        wave === 0 ? t.surf : 'rgba(218,247,227,0.39)');
       }
     }
 
-    // 4. Winding Azure River & Estuary
+    for (const f of course.fields) {
+      if (fillPoly(ctx, cam, f.poly, f.color, 'rgba(43,65,39,0.64)', 1.2)) drawFurrows(cam, f);
+    }
+    drawAirfieldVerge(cam);
+
     for (let i = 0; i < course.riverSegments.length; i += 1) {
       const seg = course.riverSegments[i];
       fillPoly(ctx, cam, seg.bank, t.beach);
@@ -224,10 +216,10 @@ export function createRenderer(canvas) {
       fillPoly(ctx, cam, seg.highlight, t.riverShallow);
     }
 
-    // 5. Pelican Point Runway 36, Touchdown Zone, Threshold & PAPI Approach Lights
+    drawHarborRoads(cam);
+
     drawRunway36(cam, state);
 
-    // 6. Active & Next Ring Ground Reference Shadows + Subtle Altitude Beacon
     const rings = course.rings;
     for (let i = state.activeRing; i < Math.min(rings.length, state.activeRing + 2); i += 1) {
       const r = rings[i];
@@ -243,7 +235,6 @@ export function createRenderer(canvas) {
         ctx.lineWidth = 1.4;
         ctx.stroke();
 
-        // Delicate vertical altitude guide beam to active ring
         if (isAct && projectWorld(cam, r.x, r.y - RING.radius, r.z, _pB)) {
           const beamG = ctx.createLinearGradient(_pA.x, _pA.y, _pB.x, _pB.y);
           beamG.addColorStop(0, 'rgba(255, 210, 77, 0.28)');
@@ -260,8 +251,39 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 7. Aircraft Ground Shadow (crucial for crisp touchdown flare depth judgment!)
     drawPlaneShadow(cam, state.plane);
+  }
+
+  function drawFurrows(cam, field) {
+    const [a, b, c, d] = field.poly;
+    const along = field.stripe ? [a, b, d, c] : [a, d, b, c];
+    const [p, q, r, s] = along;
+    const cropPoint = (start, end, u) => [start[0] + (end[0] - start[0]) * u, 0, start[2] + (end[2] - start[2]) * u];
+    const rows = Math.hypot(field.cx - cam.x, field.cz - cam.z) < 900 ? 12 : 6;
+    for (let i = 1; i < rows; i += 1) {
+      const u = i / rows, v = u + 0.30 / rows;
+      fillPoly(ctx, cam, [cropPoint(p, q, u), cropPoint(p, q, v), cropPoint(r, s, v), cropPoint(r, s, u)],
+        i % 2 ? 'rgba(44,58,36,0.19)' : 'rgba(255,220,144,0.19)');
+    }
+  }
+
+  function drawAirfieldVerge(cam) {
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 10; i += 1) {
+        const x = side * (48 + i * 8), z = -310 - i * 4;
+        fillPoly(ctx, cam, [[x, 0, z], [x + side * 4, 0, z + 3],
+          [x + side * 4, 0, 22], [x, 0, 22]], 'rgba(223,199,122,0.13)');
+      }
+    }
+  }
+
+  function drawHarborRoads(cam) {
+    for (const z of [902, 1040]) {
+      fillPoly(ctx, cam, [[117, 0, z], [401, 0, z], [401, 0, z + 8], [117, 0, z + 8]], '#bba57f');
+    }
+    for (const x of [157, 367]) {
+      fillPoly(ctx, cam, [[x, 0, 881], [x + 8, 0, 881], [x + 8, 0, 1054], [x, 0, 1054]], '#bba57f');
+    }
   }
 
   function drawRunway36(cam, state) {
@@ -270,23 +292,17 @@ export function createRenderer(canvas) {
     const z1 = RUNWAY.zEnd;
     const onApproach = state.phase === PHASE_APPROACH || state.phase === PHASE_ROLLOUT;
 
-    // Gravel shoulder & tarmac apron
-    fillPoly(ctx, cam, [[-hw - 10, 0, z0 - 16], [hw + 10, 0, z0 - 16], [hw + 10, 0, z1 + 16], [-hw - 10, 0, z1 + 16]], '#4a534c');
-    // Taxiway spur to hangars on West side
-    fillPoly(ctx, cam, [[-hw - 55, 0, 110], [-hw, 0, 110], [-hw, 0, 185], [-hw - 55, 0, 185]], '#3a414a');
-    // Main asphalt runway surface
-    fillPoly(ctx, cam, [[-hw, 0, z0], [hw, 0, z0], [hw, 0, z1], [-hw, 0, z1]], '#2b313a');
+    fillPoly(ctx, cam, [[-hw - 10, 0, z0 - 16], [hw + 10, 0, z0 - 16], [hw + 10, 0, z1 + 16], [-hw - 10, 0, z1 + 16]], '#61584f');
+    fillPoly(ctx, cam, [[-hw - 55, 0, 110], [-hw, 0, 110], [-hw, 0, 185], [-hw - 55, 0, 185]], '#555261');
+    fillPoly(ctx, cam, [[-hw, 0, z0], [hw, 0, z0], [hw, 0, z1], [-hw, 0, z1]], '#41404b');
 
-    // Crisp white edge lines
     fillPoly(ctx, cam, [[-hw + 1.4, 0, z0 + 2], [-hw + 2.8, 0, z0 + 2], [-hw + 2.8, 0, z1 - 2], [-hw + 1.4, 0, z1 - 2]], '#e9eef4');
     fillPoly(ctx, cam, [[hw - 2.8, 0, z0 + 2], [hw - 1.4, 0, z0 + 2], [hw - 1.4, 0, z1 - 2], [hw - 2.8, 0, z1 - 2]], '#e9eef4');
 
-    // Piano-key threshold stripes at South end (Runway 36)
     for (let sx = -16; sx <= 16; sx += 6.4) {
-      fillPoly(ctx, cam, [[sx - 1.5, 0, z0 + 6], [sx + 1.5, 0, z0 + 6], [sx + 1.5, 0, z0 + 26], [sx - 1.5, 0, z0 + 26]], '#eef3f8');
+      fillPoly(ctx, cam, [[sx - 1.5, 0, z0 + 6], [sx + 1.5, 0, z0 + 6], [sx + 1.5, 0, z0 + 26], [sx - 1.5, 0, z0 + 26]], '#f9edd3');
     }
 
-    // Painted bold "36" runway designation numerals past threshold
     const nZ0 = z0 + 33, nZ1 = z0 + 49, nZm = z0 + 41;
     const strokeSeg = (x0, za, x1, zb) => {
       if (projectWorld(cam, x0, 0.1, za, _pA) && projectWorld(cam, x1, 0.1, zb, _pB)) {
@@ -295,11 +311,9 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.moveTo(_pA.x, _pA.y); ctx.lineTo(_pB.x, _pB.y); ctx.stroke();
       }
     };
-    // "3" on left (-8..-2) and "6" on right (+2..+8)
     strokeSeg(-8, nZ1, -2, nZ1); strokeSeg(-2, nZ1, -2, nZ0); strokeSeg(-8, nZm, -2, nZm); strokeSeg(-8, nZ0, -2, nZ0);
     strokeSeg(8, nZ1, 2, nZ1); strokeSeg(2, nZ1, 2, nZ0); strokeSeg(2, nZm, 8, nZm); strokeSeg(8, nZm, 8, nZ0); strokeSeg(2, nZ0, 8, nZ0);
 
-    // Touchdown Zone (TDZ) glowing highlight & aiming point blocks
     if (onApproach) {
       const pulse = 0.22 + 0.14 * Math.sin(state.time * 5.2);
       fillPoly(
@@ -310,16 +324,13 @@ export function createRenderer(canvas) {
         2,
       );
     }
-    // White painted Touchdown Aiming Bars
     fillPoly(ctx, cam, [[-12.5, 0, RUNWAY.aimZ - 14], [-6.5, 0, RUNWAY.aimZ - 14], [-6.5, 0, RUNWAY.aimZ + 14], [-12.5, 0, RUNWAY.aimZ + 14]], '#f0f5fa');
     fillPoly(ctx, cam, [[6.5, 0, RUNWAY.aimZ - 14], [12.5, 0, RUNWAY.aimZ - 14], [12.5, 0, RUNWAY.aimZ + 14], [6.5, 0, RUNWAY.aimZ + 14]], '#f0f5fa');
 
-    // Dashed white centerline
     for (let z = z0 + 36; z < z1 - 14; z += 36) {
-      fillPoly(ctx, cam, [[-0.9, 0, z], [0.9, 0, z], [0.9, 0, z + 18], [-0.9, 0, z + 18]], '#eef3f8');
+      fillPoly(ctx, cam, [[-0.9, 0, z], [0.9, 0, z], [0.9, 0, z + 18], [-0.9, 0, z + 18]], '#f9edd3');
     }
 
-    // Approach rabbit strobe lights leading to Runway 36 threshold
     const strobeIdx = Math.floor(state.time * 7) % 6;
     for (let i = 0; i < 6; i += 1) {
       const lz = -30 - (5 - i) * 42;
@@ -333,7 +344,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // Runway edge lights (warm glow, especially vibrant in Golden Hour & Approach!)
     for (let z = z0; z <= z1; z += 58) {
       for (const side of [-1, 1]) {
         if (projectWorld(cam, side * (hw + 2.5), 1, z, _pA)) {
@@ -347,7 +357,7 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 4-Box PAPI Precision Approach Path Indicator beside Touchdown Zone
+    // PAPI lights
     for (let i = 0; i < 4; i += 1) {
       const px = RUNWAY.papiX - i * 4.2;
       if (projectWorld(cam, px, 1.8, RUNWAY.papiZ, _pA)) {
@@ -385,12 +395,10 @@ export function createRenderer(canvas) {
     fillPoly(ctx, cam, pts, `rgba(10, 22, 32, ${alpha.toFixed(3)})`, null, 1, 6);
   }
 
-  // ---------------------------------------------------------------- Depth-Sorted 3D Objects
   function drawAll3DObjects(cam, state) {
     drawList.length = 0;
     const course = state.course;
 
-    // 1. Volumetric Cumulus Clouds
     for (let i = 0; i < course.clouds.length; i += 1) {
       const c = course.clouds[i];
       if (projectWorld(cam, c.x, c.y, c.z, _pA) && _pA.cz < 3200) {
@@ -398,7 +406,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 2. 3D Landmarks & Props
     for (let i = 0; i < course.props.length; i += 1) {
       const pr = course.props[i];
       if (projectWorld(cam, pr.x, pr.y, pr.z, _pA) && _pA.cz < 2600) {
@@ -406,7 +413,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 3. Flight-path directional chevrons leading from active ring to next ring
     const rings = course.rings;
     if (state.activeRing < rings.length) {
       const cur = rings[state.activeRing];
@@ -424,7 +430,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 4. Glowing Target Rings
     for (let i = 0; i < rings.length; i += 1) {
       const r = rings[i];
       if (projectWorld(cam, r.x, r.y, r.z, _pA) && _pA.cz < 2400) {
@@ -432,7 +437,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 5. Particles
     for (let i = 0; i < state.particles.length; i += 1) {
       const pt = state.particles[i];
       if (!pt.active) continue;
@@ -441,7 +445,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 6. Hero Player Aircraft (in Chase camera mode)
     const p = state.plane;
     if (cam.mode === 'chase' && projectWorld(cam, p.x, p.y + 1.5, p.z, _pA)) {
       drawList.push({ cz: _pA.cz, kind: 'plane', sx: _pA.x, sy: _pA.y, scale: _pA.scale });
@@ -450,12 +453,11 @@ export function createRenderer(canvas) {
     // Painter's algorithm: far to near
     drawList.sort((a, b) => b.cz - a.cz);
 
-    // Draw wingtip trails slightly behind aircraft
     drawWingtipTrails(cam, state.trails);
 
     for (let i = 0; i < drawList.length; i += 1) {
       const item = drawList[i];
-      if (item.kind === 'cloud') drawCloud(item, course.theme);
+      if (item.kind === 'cloud') drawCloud(item, course.theme, cam.roll);
       else if (item.kind === 'prop') drawProp(cam, item, state);
       else if (item.kind === 'guide') drawGuideChevron(item, state.time);
       else if (item.kind === 'ring') drawTargetRing(cam, item.obj, state);
@@ -468,41 +470,45 @@ export function createRenderer(canvas) {
     }
   }
 
-  function drawCloud(item, theme) {
-    const c = item.obj;
-    const rad = c.size * item.scale;
-    if (rad < 3 || rad > 360) return;
-    const fade = item.cz < 240 ? Math.max(0, (item.cz - 90) / 150) : Math.min(0.88, 1 - (item.cz - 1900) / 1400);
-    if (fade <= 0.02) return;
+  const cloudSprites = new WeakMap();
 
+  function drawCloud(item, theme, bank) {
+    const c = item.obj, rad = c.size * item.scale;
+    if (rad < 3 || rad > 320 || item.sx + rad * 2 < 0 || item.sx - rad * 2 > VIEW.width) return;
+    const fade = Math.min(1, (item.cz - 96) / 170, (3300 - item.cz) / 1400);
+    if (fade < 0.03) return;
+
+    let sprite = cloudSprites.get(c);
+    if (!sprite) {
+      sprite = document.createElement('canvas');
+      sprite.width = 400; sprite.height = 104;
+      const ink = sprite.getContext('2d');
+      const cloud = (x, y, w, h, color, strength) => {
+        ink.save();
+        ink.translate(x, y); ink.scale(w, h);
+        const fog = ink.createRadialGradient(-0.15, -0.25, 0.06, 0, 0, 1);
+        fog.addColorStop(0, color); fog.addColorStop(0.45, color);
+        fog.addColorStop(1, color + '00');
+        ink.fillStyle = fog; ink.globalAlpha = strength;
+        ink.fillRect(-1, -1, 2, 2);
+        ink.restore();
+      };
+      cloud(200, 67, 196, 32, theme.cloudShadow, 0.95);
+      cloud(203, 60, 189, 23, theme.cloudTop, 0.59);
+      for (let i = 0; i < 11; i += 1) {
+        const u = i / 10, x = 48 + i * 30;
+        const h = 12 + Math.sin(u * Math.PI) * (12 + 10 * Math.sin(i * 1.65 + c.seed));
+        const y = 66 - h + Math.sin(i * 2.4 + c.seed) * 6;
+        cloud(x, y + 9, 43 - i % 3 * 4, h * 0.96, theme.cloudShadow, 0.47);
+        cloud(x, y, 40 - i % 3 * 4, h, theme.cloudTop, 0.77);
+      }
+      cloudSprites.set(c, sprite);
+    }
     ctx.save();
+    ctx.translate(item.sx, item.sy);
+    ctx.rotate(-bank);
     ctx.globalAlpha = fade * 0.88;
-    const sx = item.sx;
-    const sy = item.sy;
-    // Soft 3-tone volumetric cumulus puffs (cool base -> warm mid -> crisp sunlit crown)
-    ctx.fillStyle = theme.cloudShadow;
-    for (let i = 0; i < c.puffs; i += 1) {
-      const ox = (i - (c.puffs - 1) * 0.5) * rad * 0.7;
-      const oy = rad * 0.16 + Math.sin(c.seed + i * 2) * rad * 0.08;
-      const pr = rad * (0.48 + (i === 1 ? 0.18 : 0));
-      ctx.beginPath();
-      ctx.ellipse(sx + ox, sy + oy, pr * 1.18, pr * 0.52, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = theme.cloudTop;
-    for (let i = 0; i < c.puffs; i += 1) {
-      const mid = i === Math.floor(c.puffs / 2);
-      const ox = (i - (c.puffs - 1) * 0.5) * rad * 0.65;
-      const oy = -rad * (mid ? 0.24 : 0.08);
-      const pr = rad * (mid ? 0.68 : 0.48);
-      const g = ctx.createRadialGradient(sx + ox - pr * 0.2, sy + oy - pr * 0.25, pr * 0.1, sx + ox, sy + oy, pr);
-      g.addColorStop(0, theme.cloudTop);
-      g.addColorStop(1, theme.cloudShadow);
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.ellipse(sx + ox, sy + oy, pr * 1.06, pr * 0.68, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.drawImage(sprite, -rad * 1.83, -rad * 0.45, rad * 3.66, rad * 0.9);
     ctx.restore();
   }
 
@@ -535,7 +541,7 @@ export function createRenderer(canvas) {
       return;
     }
 
-    // Rotate grounded billboard props with -cam.roll so every landmark stays flush with the banked horizon!
+    // Keep billboards upright in world space.
     ctx.save();
     ctx.translate(item.sx, item.sy);
     ctx.rotate(-cam.roll);
@@ -578,7 +584,7 @@ export function createRenderer(canvas) {
       ctx.fillStyle = '#d9dfe6'; ctx.fillRect(-w * 0.5, -h, w, h);
       ctx.fillStyle = '#c94338'; ctx.fillRect(-w * 0.5, -h * 0.65, w, h * 0.16);
       shape('#264b6e', [[-w * 0.85, -h - 9 * s], [w * 0.85, -h - 9 * s], [w * 0.62, -h], [-w * 0.62, -h]]);
-      ctx.fillStyle = '#eef3f8'; ctx.fillRect(-w * 0.95, -h - 11.5 * s, w * 1.9, 2.8 * s);
+      ctx.fillStyle = '#f9edd3'; ctx.fillRect(-w * 0.95, -h - 11.5 * s, w * 1.9, 2.8 * s);
       ctx.fillStyle = '#5ff5a8'; ctx.beginPath(); ctx.arc(0, -h - 14 * s, Math.max(1.6, 2.2 * s), 0, Math.PI * 2); ctx.fill();
     } else if (pr.type === 'hangar') {
       const w = 34 * s, h = 15 * s;
@@ -612,13 +618,17 @@ export function createRenderer(canvas) {
       shape('#756f66', [[-w, 2 * s], [-w * 0.55, -h], [w * 0.35, -h * 0.85], [w, 2 * s]]);
       shape('#5c8549', [[-w * 0.55, -h], [w * 0.35, -h * 0.85], [w * 0.15, -h * 0.55], [-w * 0.4, -h * 0.65]]);
     } else if (pr.type === 'house') {
-      const w = 18 * s, h = 11 * s;
+      const w = 18 * s, h = 11 * s, eave = h * 1.66;
       if (h >= 1.8) {
-        ctx.fillStyle = '#efe9dc'; ctx.fillRect(-w * 0.5, -h, w, h);
-        shape(pr.roof || '#c85440', [[-w * 0.62, -h], [0, -h * 1.72], [w * 0.62, -h]]);
-        ctx.fillStyle = '#335270';
-        ctx.fillRect(-w * 0.3, -h * 0.66, w * 0.2, h * 0.28);
-        ctx.fillRect(w * 0.1, -h * 0.66, w * 0.2, h * 0.28);
+        shape('rgba(40,38,33,0.23)', [[-w * 0.54, 0], [w * 0.9, 0], [w * 1.4, 3 * s], [-w * 0.18, 3 * s]]);
+        ctx.fillStyle = '#eacb9f'; ctx.fillRect(-w * 0.5, -h, w, h);
+        shape('#a27762', [[w * 0.5, -h], [w * 0.88, -h - 4 * s], [w * 0.88, -4 * s], [w * 0.5, 0]]);
+        shape(pr.roof, [[-w * 0.62, -h], [-w * 0.02, -eave], [w * 0.42, -eave - 4 * s], [w * 0.98, -h - 4 * s], [w * 0.62, -h]]);
+        shape('rgba(255,230,183,0.28)', [[-w * 0.62, -h], [-w * 0.02, -eave], [w * 0.62, -h]]);
+        ctx.fillStyle = '#514a59'; ctx.fillRect(-w * 0.08, -h * 0.44, w * 0.16, h * 0.44);
+        ctx.fillStyle = '#ffebbe';
+        ctx.fillRect(-w * 0.36, -h * 0.68, w * 0.2, h * 0.27);
+        ctx.fillRect(w * 0.16, -h * 0.68, w * 0.2, h * 0.27);
       }
     } else if (pr.type === 'steeple') {
       const w = 13 * s, h = 28 * s;
@@ -628,9 +638,9 @@ export function createRenderer(canvas) {
     } else if (pr.type === 'mountain') {
       const w = 155 * s, h = 108 * s;
       if (h >= 6) {
-        shape('#526c7d', [[-w, 2 * s], [-w * 0.08, -h], [w * 0.14, -h * 0.92], [w, 2 * s]]);
-        shape('#6c8799', [[-w * 0.08, -h], [w * 0.14, -h * 0.92], [w, 2 * s], [w * 0.08, 2 * s]]);
-        shape('#dce8f2', [[-w * 0.08, -h], [w * 0.14, -h * 0.92], [w * 0.32, -h * 0.62], [-w * 0.26, -h * 0.66]]);
+        shape('#66627c', [[-w, 2 * s], [-w * 0.62, -h * 0.31], [-w * 0.12, -h], [w * 0.11, -h * 0.9], [w * 0.48, -h * 0.40], [w, 2 * s]]);
+        shape('#9d8290', [[-w * 0.12, -h], [w * 0.11, -h * 0.9], [w * 0.48, -h * 0.40], [w, 2 * s], [w * 0.09, 2 * s], [w * 0.23, -h * 0.34]]);
+        shape('#d9b59e', [[-w * 0.12, -h], [w * 0.11, -h * 0.9], [w * 0.29, -h * 0.66], [w * 0.02, -h * 0.78], [-w * 0.07, -h * 0.66], [-w * 0.25, -h * 0.74]]);
       }
     } else if (pr.type === 'boat') {
       const bob = Math.sin(state.time * 2.4 + pr.phase) * 1.4 * s, w = 13 * s, h = 18 * s;
@@ -670,16 +680,15 @@ export function createRenderer(canvas) {
     const isDone = ring.status === 'hit' || ring.status === 'bullseye';
     const isMissed = ring.status === 'missed';
 
-    // Build orthonormal tangent basis for ring's 3D plane
     const cosY = Math.cos(ring.yaw);
     const sinY = Math.sin(ring.yaw);
     const rx = cosY;
     const rz = -sinY;
 
-    const segs = 24;
+    const segs = 48;
     const radius = RING.radius * (1 + ring.hitFlash * 0.35);
-    const pts = [];
-    let allOk = true;
+    ctx.beginPath();
+    let scale = 1;
     for (let i = 0; i < segs; i += 1) {
       const a = (i / segs) * Math.PI * 2;
       const ca = Math.cos(a);
@@ -687,14 +696,13 @@ export function createRenderer(canvas) {
       const wx = ring.x + rx * ca * radius;
       const wy = ring.y + sa * radius;
       const wz = ring.z + rz * ca * radius;
-      const p = { x: 0, y: 0, scale: 1, cz: 0 };
-      if (!projectWorld(cam, wx, wy, wz, p)) {
-        allOk = false;
-        break;
-      }
-      pts.push(p);
+      if (!projectWorld(cam, wx, wy, wz, _pA)) return;
+      if (i === 0) {
+        ctx.moveTo(_pA.x, _pA.y);
+        scale = _pA.scale;
+      } else ctx.lineTo(_pA.x, _pA.y);
     }
-    if (!allOk) return;
+    ctx.closePath();
 
     const theme = state.course.theme;
     const baseColor = isActive
@@ -707,55 +715,42 @@ export function createRenderer(canvas) {
             ? 'rgba(220, 100, 90, 0.35)'
             : 'rgba(200, 232, 255, 0.26)';
 
-    const avgScale = pts[0].scale;
-    const strokeW = Math.max(2, Math.min(18, avgScale * (isActive ? 3.2 : isNext ? 2.1 : 1.5)));
+    const strokeW = Math.max(2, Math.min(18, scale * (isActive ? 3.2 : isNext ? 2.1 : 1.5)));
 
     ctx.save();
     if (isDone && ring.hitFlash <= 0) ctx.globalAlpha = 0.25;
     else if (!isActive && !isNext && !isDone) ctx.globalAlpha = 0.32;
 
-    // Soft outer halo on Active Ring
     if (isActive || ring.hitFlash > 0) {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < segs; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.closePath();
       ctx.strokeStyle = ring.hitFlash > 0 ? 'rgba(130, 255, 195, 0.55)' : theme.ringActiveGlow;
-      ctx.lineWidth = strokeW * 2.8;
+      ctx.lineWidth = strokeW * 3.7;
+      ctx.shadowColor = theme.ringActive;
+      ctx.shadowBlur = isActive ? Math.min(23, strokeW * 2.8) : 0;
       ctx.stroke();
+      ctx.shadowBlur = 0;
     }
 
-    // Main luminous ring torus
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < segs; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.closePath();
     ctx.strokeStyle = baseColor;
     ctx.lineWidth = strokeW;
     ctx.stroke();
 
-    // Inner bright specular core + rotating accent segments on Active Ring
     if (isActive) {
       ctx.strokeStyle = '#fff9d6';
       ctx.lineWidth = Math.max(1.2, strokeW * 0.35);
       ctx.stroke();
 
-      // Rotating inner bullseye target reticle
-      const bPts = [];
-      let bOk = true;
+      ctx.beginPath();
+      let visible = true;
       for (let i = 0; i < 16; i += 1) {
         const a = (i / 16) * Math.PI * 2 + state.time * 1.4;
-        const p = { x: 0, y: 0, scale: 1, cz: 0 };
-        if (!projectWorld(cam, ring.x + rx * Math.cos(a) * RING.bullseyeRadius, ring.y + Math.sin(a) * RING.bullseyeRadius, ring.z + rz * Math.cos(a) * RING.bullseyeRadius, p)) {
-          bOk = false;
+        const u = Math.cos(a) * RING.bullseyeRadius;
+        if (!projectWorld(cam, ring.x + rx * u, ring.y + Math.sin(a) * RING.bullseyeRadius, ring.z + rz * u, _pA)) {
+          visible = false;
           break;
         }
-        bPts.push(p);
+        if (i === 0) ctx.moveTo(_pA.x, _pA.y); else ctx.lineTo(_pA.x, _pA.y);
       }
-      if (bOk) {
-        ctx.beginPath();
-        ctx.moveTo(bPts[0].x, bPts[0].y);
-        for (let i = 1; i < bPts.length; i += 1) ctx.lineTo(bPts[i].x, bPts[i].y);
+      if (visible) {
         ctx.closePath();
         ctx.strokeStyle = 'rgba(255, 245, 175, 0.52)';
         ctx.lineWidth = Math.max(1, strokeW * 0.28);
@@ -791,8 +786,11 @@ export function createRenderer(canvas) {
     const alpha = Math.max(0, pt.life / pt.maxLife);
     const r = Math.max(1.5, Math.min(28, pt.size * item.scale * (pt.kind === 'smoke' ? 1.4 - alpha * 0.5 : 1)));
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = pt.color;
+    ctx.globalAlpha = alpha * 0.52;
+    const puff = ctx.createRadialGradient(item.sx, item.sy, 0, item.sx, item.sy, r);
+    puff.addColorStop(0, pt.color);
+    puff.addColorStop(1, 'rgba(203,179,153,0)');
+    ctx.fillStyle = puff;
     ctx.beginPath();
     ctx.arc(item.sx, item.sy, r, 0, Math.PI * 2);
     ctx.fill();
@@ -809,7 +807,6 @@ export function createRenderer(canvas) {
     const toW = (lx, ly, lz) => [p.x + rx * lx + ux * ly + fx * lz, baseY + ry * lx + uy * ly + fy * lz, p.z + rz * lx + uz * ly + fz * lz];
     const poly = (pts, fill, stroke = null, lw = 1) => fillPoly(ctx, cam, pts.map(([lx, ly, lz]) => toW(lx, ly, lz)), fill, stroke, lw, 2);
 
-    // 1. Retractable Landing Gear
     if (p.gearAnim > 0.06) {
       const drop = p.gearAnim;
       for (const side of [-1, 1]) {
@@ -828,7 +825,6 @@ export function createRenderer(canvas) {
       }
     }
 
-    // 2. Spinning Propeller Disc & Spinner
     const propC = toW(0, 0.05, 5.15);
     if (projectWorld(cam, propC[0], propC[1], propC[2], _pA)) {
       const pr = Math.max(5, _pA.scale * 1.45);
@@ -840,11 +836,10 @@ export function createRenderer(canvas) {
         const a = p.propAngle + b * Math.PI;
         ctx.beginPath(); ctx.moveTo(_pA.x, _pA.y); ctx.lineTo(_pA.x + Math.cos(a) * pr * 0.95, _pA.y + Math.sin(a) * pr * 0.95); ctx.stroke();
       }
-      ctx.fillStyle = '#e84a36'; ctx.beginPath(); ctx.arc(_pA.x, _pA.y, Math.max(2.4, pr * 0.24), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#b22f37'; ctx.beginPath(); ctx.arc(_pA.x, _pA.y, Math.max(2.4, pr * 0.24), 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
-    // 3. Wings, Struts, Flaps & Ailerons
     const flapDrop = -p.flapAnim * 0.55, ailL = p.aileron * 0.28, ailR = -p.aileron * 0.28;
     for (const side of [-1, 1]) {
       const a = toW(side * 0.75, -0.35, 0.75), b = toW(side * 3.8, 0.34, 0.75);
@@ -853,32 +848,32 @@ export function createRenderer(canvas) {
         ctx.beginPath(); ctx.moveTo(_pA.x, _pA.y); ctx.lineTo(_pB.x, _pB.y); ctx.stroke();
       }
     }
-    poly([[-0.8, 0.22, 1.85], [-6.8, 0.48, 0.95], [-6.8, 0.44, -0.35], [-0.8, 0.18, -0.55]], '#f6f3ea', '#c7c2b6');
-    poly([[0.8, 0.22, 1.85], [6.8, 0.48, 0.95], [6.8, 0.44, -0.35], [0.8, 0.18, -0.55]], '#f6f3ea', '#c7c2b6');
-    poly([[-5.4, 0.42, 1.15], [-6.95, 0.5, 0.92], [-6.95, 0.46, -0.35], [-5.4, 0.38, -0.4]], '#e84a36');
-    poly([[5.4, 0.42, 1.15], [6.95, 0.5, 0.92], [6.95, 0.46, -0.35], [5.4, 0.38, -0.4]], '#e84a36');
+    poly([[-0.8, 0.22, 1.85], [-6.8, 0.48, 0.95], [-6.8, 0.44, -0.35], [-0.8, 0.18, -0.55]], '#f5dfb8', '#c7c2b6');
+    poly([[0.8, 0.22, 1.85], [6.8, 0.48, 0.95], [6.8, 0.44, -0.35], [0.8, 0.18, -0.55]], '#f5dfb8', '#c7c2b6');
+    poly([[-5.4, 0.42, 1.15], [-6.95, 0.5, 0.92], [-6.95, 0.46, -0.35], [-5.4, 0.38, -0.4]], '#b22f37');
+    poly([[5.4, 0.42, 1.15], [6.95, 0.5, 0.92], [6.95, 0.46, -0.35], [5.4, 0.38, -0.4]], '#b22f37');
     poly([[-0.9, 0.16, -0.52], [-3.2, 0.28, -0.45], [-3.2, 0.28 + flapDrop, -1.05], [-0.9, 0.16 + flapDrop, -1.1]], '#d8d2c5', '#8f897e');
     poly([[0.9, 0.16, -0.52], [3.2, 0.28, -0.45], [3.2, 0.28 + flapDrop, -1.05], [0.9, 0.16 + flapDrop, -1.1]], '#d8d2c5', '#8f897e');
     poly([[-3.4, 0.29, -0.44], [-5.35, 0.38, -0.39], [-5.35, 0.38 + ailL, -0.82], [-3.4, 0.29 + ailL, -0.88]], '#e4dfd2', '#9d978b', 0.9);
     poly([[3.4, 0.29, -0.44], [5.35, 0.38, -0.39], [5.35, 0.38 + ailR, -0.82], [3.4, 0.29 + ailR, -0.88]], '#e4dfd2', '#9d978b', 0.9);
 
-    // 4. Fuselage, Canopy, Tailplane & Rudder
     poly([[-0.72, -0.5, 3.6], [0.72, -0.5, 3.6], [0.5, -0.35, -3.9], [-0.5, -0.35, -3.9]], '#c9c4b8');
     poly([[-0.82, 0.28, 3.4], [-0.86, -0.45, 3.4], [-0.46, -0.32, -4.1], [-0.4, 0.24, -4.1]], '#e9e5db');
     poly([[0.82, 0.28, 3.4], [0.86, -0.45, 3.4], [0.46, -0.32, -4.1], [0.4, 0.24, -4.1]], '#e9e5db');
-    poly([[-0.78, 0.34, 3.5], [0.78, 0.34, 3.5], [0.36, 0.32, -4.15], [-0.36, 0.32, -4.15]], '#faf8f2');
-    poly([[-0.64, 0.26, 4.9], [0.64, 0.26, 4.9], [0.78, 0.34, 3.4], [-0.78, 0.34, 3.4]], '#e84a36');
-    poly([[-0.22, 0.36, 3.5], [0.22, 0.36, 3.5], [0.12, 0.34, -4.0], [-0.12, 0.34, -4.0]], '#e84a36');
-    poly([[-0.62, 0.36, 1.9], [0.62, 0.36, 1.9], [0.54, 1.05, 0.55], [-0.54, 1.05, 0.55]], '#1e3e63', '#80b5de');
+    poly([[-0.78, 0.34, 3.5], [0.78, 0.34, 3.5], [0.36, 0.32, -4.15], [-0.36, 0.32, -4.15]], '#ffedd0');
+    poly([[-0.64, 0.26, 4.9], [0.64, 0.26, 4.9], [0.78, 0.34, 3.4], [-0.78, 0.34, 3.4]], '#b22f37');
+    poly([[-0.22, 0.36, 3.5], [0.22, 0.36, 3.5], [0.12, 0.34, -4.0], [-0.12, 0.34, -4.0]], '#b22f37');
+    poly([[-0.62, 0.36, 1.9], [0.62, 0.36, 1.9], [0.54, 1.05, 0.55], [-0.54, 1.05, 0.55]], '#1e3e63', '#e4af85');
     poly([[-0.54, 1.05, 0.55], [0.54, 1.05, 0.55], [0.38, 0.42, -1.6], [-0.38, 0.42, -1.6]], '#1a3554', '#6ea4cf');
     poly([[-0.28, 0.98, 0.6], [0.08, 0.98, 0.6], [0.02, 0.54, -1.2], [-0.22, 0.54, -1.2]], 'rgba(180, 228, 255, 0.34)');
 
     const elevDrop = -p.elevator * 0.35, rudShift = p.rudder * 0.32;
     poly([[-0.32, 0.28, -3.45], [-2.55, 0.32, -3.75], [-2.55, 0.32, -4.45], [-0.32, 0.28, -4.35]], '#f4f0e6', '#bfb9ac');
     poly([[0.32, 0.28, -3.45], [2.55, 0.32, -3.75], [2.55, 0.32, -4.45], [0.32, 0.28, -4.35]], '#f4f0e6', '#bfb9ac');
-    poly([[-2.45, 0.32, -4.42], [2.45, 0.32, -4.42], [2.35, 0.32 + elevDrop, -4.95], [-2.35, 0.32 + elevDrop, -4.95]], '#e84a36', '#b83526', 0.9);
+    poly([[-2.45, 0.32, -4.42], [2.45, 0.32, -4.42], [2.35, 0.32 + elevDrop, -4.95], [-2.35, 0.32 + elevDrop, -4.95]], '#b22f37', '#b83526', 0.9);
+    poly([[0.82, 0.10, 3.2], [0.86, -0.01, 3.2], [0.47, -0.06, -4.0], [0.43, 0.06, -4.0]], '#a73439');
     poly([[0, 0.3, -2.65], [0, 2.25, -4.1], [0, 2.25, -4.62], [0, 0.3, -4.45]], '#faf7ef', '#bfb9ac');
-    poly([[0, 0.32, -4.45], [0, 2.22, -4.62], [rudShift, 2.1, -5.12], [rudShift, 0.35, -4.95]], '#e84a36', '#b33223');
+    poly([[0, 0.32, -4.45], [0, 2.22, -4.62], [rudShift, 2.1, -5.12], [rudShift, 0.35, -4.95]], '#b22f37', '#b33223');
 
     const strobe = Math.sin(time * 11) > 0.82;
     for (const [lx, col] of [[-6.95, '#ff4747'], [6.95, '#47ff88']]) {
@@ -898,14 +893,46 @@ export function createRenderer(canvas) {
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(VIEW.horizonX, base + 20, 220, Math.PI, 0); ctx.fill();
     ctx.fillStyle = '#ebe6db';
     ctx.beginPath(); ctx.moveTo(VIEW.horizonX - 240, base); ctx.quadraticCurveTo(VIEW.horizonX, base - 76, VIEW.horizonX + 240, base); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#e84a36';
+    ctx.fillStyle = '#b22f37';
     ctx.beginPath(); ctx.moveTo(VIEW.horizonX - 38, base); ctx.quadraticCurveTo(VIEW.horizonX, base - 72, VIEW.horizonX + 38, base); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = 'rgba(22, 31, 45, 0.72)'; ctx.lineWidth = 10;
     ctx.beginPath(); ctx.moveTo(0, 140); ctx.lineTo(145, 0); ctx.moveTo(VIEW.width, 140); ctx.lineTo(VIEW.width - 145, 0); ctx.stroke();
     ctx.restore();
   }
 
+  function drawTitleShade() {
+    const shade = ctx.createRadialGradient(97, 283, 150, 125, 317, 715);
+    shade.addColorStop(0, 'rgba(16,23,41,0.76)');
+    shade.addColorStop(0.57, 'rgba(16,23,41,0.46)');
+    shade.addColorStop(1, 'rgba(16,23,41,0)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height - VIEW.panelHeight);
+  }
+
+  function composeShot(cam, state, screen, shot) {
+    if (cam.mode !== 'chase') return cam;
+    const p = state.plane;
+    if (shot === 'chase' || shot === 'play') {
+      const ring = state.course.rings[state.activeRing];
+      if (!ring) return cam;
+      const x = cam.x + Math.sin(p.yaw) * 7 + Math.cos(p.yaw) * 2;
+      const z = cam.z + Math.cos(p.yaw) * 7 - Math.sin(p.yaw) * 2;
+      cam = { ...cam, x, z, y: cam.y + 0.6, yaw: Math.atan2(ring.x - x, ring.z - z), pitch: -0.010, roll: cam.roll * 0.83 };
+    } else if (screen === SCREEN_TITLE) {
+      cam = { ...cam, yaw: cam.yaw - 0.27, pitch: cam.pitch + 0.085 };
+    } else if (shot === 'approach') {
+      cam = { ...cam, x: cam.x + 1.8, yaw: cam.yaw + 0.026, pitch: cam.pitch + 0.025 };
+    } else if (screen === SCREEN_OVER && state.phase === PHASE_COMPLETE && !state.offField) {
+      cam = { ...cam, yaw: cam.yaw - 0.39, pitch: cam.pitch + 0.06 };
+    } else {
+      return cam;
+    }
+    updateCameraBasis(cam);
+    return cam;
+  }
+
   function draw(state, cam, screen, options) {
+    cam = composeShot(cam, state, screen, options.shot);
     resize();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#09101a';
@@ -920,6 +947,7 @@ export function createRenderer(canvas) {
     drawSkyAndSea(cam, state.course, state.time);
     drawGroundWorld(cam, state);
     drawAll3DObjects(cam, state);
+    if (screen === SCREEN_TITLE) drawTitleShade();
     ctx.restore();
 
     drawHud(ctx, state, cam, { screen, stallSpeed: options.stallSpeed });

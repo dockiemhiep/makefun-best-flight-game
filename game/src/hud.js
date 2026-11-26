@@ -1,6 +1,3 @@
-// Glass aviation HUD, 6-instrument backlit cockpit panel, course radar minimap,
-// and sleek Title / Pause / Flight Debrief overlays.
-
 import { COURSE_DEFS, coastX, riverCenterZ } from './courses.js';
 import { FLIGHT, FONT, M_TO_FT, MONO, MS_TO_FPM, MS_TO_KTS, RUNWAY, VIEW } from './config.js';
 import {
@@ -46,7 +43,6 @@ export function drawHud(ctx, state, cam, options) {
   const targetBear = (Math.atan2(dx, dz) * 180 / Math.PI + 360) % 360;
   const targetRelRad = angleDiff(Math.atan2(dx, dz), p.yaw);
 
-  // 1. Center Pitch Ladder (Cockpit view only — avoids overlapping plane & runway in chase view)
   if (options.screen !== SCREEN_TITLE) {
     if (cam.mode === 'cockpit') {
       ctx.save();
@@ -72,7 +68,6 @@ export function drawHud(ctx, state, cam, options) {
     }
   }
 
-  // 2. Always-in-frame HUD tapes, compass, mission telemetry & radar
   drawHeadingTape(ctx, hdgDeg, targetBear, theme, state.course.def.windLabel);
   drawSpeedTape(ctx, kts, p.speed * MS_TO_KTS, Math.round(options.stallSpeed * MS_TO_KTS), Math.round(FLIGHT.rotateSpeed * MS_TO_KTS), p.gLoad, theme, state.stallWarn);
   drawAltTape(ctx, altFt, p.y * M_TO_FT, vSpeedFpm, theme);
@@ -83,7 +78,6 @@ export function drawHud(ctx, state, cam, options) {
     drawTargetIndicator(ctx, state, cam, target, targetDist, targetRelRad, theme);
   }
 
-  // Contextual flight event callout banner (high-contrast dark glass, stays opaque until final 0.35s fade)
   if (options.screen === SCREEN_PLAY && state.bannerTimer > 0 && state.bannerText) {
     ctx.save();
     ctx.globalAlpha = Math.min(1, state.bannerTimer * 3.0);
@@ -99,7 +93,6 @@ export function drawHud(ctx, state, cam, options) {
     ctx.restore();
   }
 
-  // Critical warning flash (Stall / Gear)
   if (options.screen === SCREEN_PLAY && (state.stallWarn || state.gearWarn)) {
     ctx.save();
     ctx.globalAlpha = 0.58 + 0.42 * Math.sin(state.time * 14);
@@ -117,7 +110,7 @@ export function drawHud(ctx, state, cam, options) {
 function drawIlsGuidance(ctx, state, theme) {
   const cx = VIEW.horizonX, cy = VIEW.horizonY, gx = cx + 158, ly = 132;
   ctx.save();
-  pill(ctx, gx - 14, cy - 66, 28, 132, 8, 'rgba(10, 18, 30, 0.48)', 'rgba(124, 247, 201, 0.3)', 1);
+  pill(ctx, gx - 14, cy - 66, 28, 132, 8, 'rgba(10, 18, 30, 0.72)', 'rgba(124, 247, 201, 0.3)', 1);
   ctx.strokeStyle = 'rgba(124, 247, 201, 0.65)'; ctx.lineWidth = 1.3;
   for (let i = -2; i <= 2; i += 1) {
     const yy = cy + i * 24;
@@ -162,7 +155,7 @@ function drawLandingChecklist(ctx, state) {
 function drawHeadingTape(ctx, hdgDeg, targetBear, theme, windLabel) {
   const w = 360, h = 42, x = VIEW.horizonX - w / 2, y = 14;
   ctx.save();
-  pill(ctx, x, y, w, h, 8, 'rgba(10, 18, 30, 0.74)', 'rgba(124, 247, 201, 0.4)', 1.2);
+  pill(ctx, x, y, w, h, 8, 'rgba(16, 26, 40, 0.88)', 'rgba(124, 247, 201, 0.4)', 1.2);
   ctx.save();
   ctx.beginPath(); ctx.rect(x + 8, y + 2, w - 16, h - 4); ctx.clip();
   const pxPerDeg = 3.2, card = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
@@ -194,7 +187,7 @@ function drawSpeedTape(ctx, ktsInt, ktsFloat, stallKts, vrKts, gLoad, theme, sta
   ctx.font = `700 10px ${MONO}`; ctx.fillStyle = theme.hud; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('SPD KTS', x + w / 2, y - 13);
 
-  pill(ctx, x, y, w, h, 8, 'rgba(10, 18, 30, 0.68)', stallWarn ? '#ff6b6b' : 'rgba(124, 247, 201, 0.36)', 1.2);
+  pill(ctx, x, y, w, h, 8, 'rgba(12, 22, 34, 0.83)', stallWarn ? '#ff6b6b' : 'rgba(175, 224, 204, 0.52)', 1.2);
   ctx.save();
   ctx.beginPath(); ctx.rect(x + 2, y + 4, w - 4, h - 8); ctx.clip();
   const stallY = cy - (stallKts - ktsFloat) * pxPerKt;
@@ -232,7 +225,7 @@ function drawAltTape(ctx, altInt, altFloat, vSpeedFpm, theme) {
   ctx.font = `700 10px ${MONO}`; ctx.fillStyle = theme.hud; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('ALT FT', x + w / 2, y - 13);
 
-  pill(ctx, x, y, w, h, 8, 'rgba(10, 18, 30, 0.68)', 'rgba(124, 247, 201, 0.36)', 1.2);
+  pill(ctx, x, y, w, h, 8, 'rgba(12, 22, 34, 0.83)', 'rgba(175, 224, 204, 0.52)', 1.2);
   ctx.save();
   ctx.beginPath(); ctx.rect(x + 2, y + 4, w - 4, h - 8); ctx.clip();
   const gndY = cy + altFloat * pxPerFt;
@@ -263,7 +256,7 @@ function drawMissionCard(ctx, state, screen) {
   const x = 20, y = 14, w = 256, h = 90;
   const totalRings = state.course.rings.length;
   ctx.save();
-  pill(ctx, x, y, w, h, 10, 'rgba(10, 18, 30, 0.74)', 'rgba(124, 247, 201, 0.36)', 1.2);
+  pill(ctx, x, y, w, h, 10, 'rgba(16, 26, 40, 0.88)', 'rgba(175, 224, 204, 0.52)', 1.2);
 
   ctx.font = `700 12px ${FONT}`; ctx.fillStyle = '#ffd24d'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText(state.course.def.name, x + 14, y + 11);
@@ -414,24 +407,23 @@ function drawTargetIndicator(ctx, state, cam, target, dist, relYaw, theme) {
   ctx.restore();
 }
 
-// ---------------------------------------------------------------- Lit 6-Instrument Cockpit Panel
 export function drawCockpitPanel(ctx, state, options) {
   const p = state.plane;
   const py = VIEW.height - VIEW.panelHeight;
   ctx.save();
 
   const panelGrad = ctx.createLinearGradient(0, py, 0, VIEW.height);
-  panelGrad.addColorStop(0, '#1e2736');
-  panelGrad.addColorStop(0.08, '#131a26');
+  panelGrad.addColorStop(0, '#51404b');
+  panelGrad.addColorStop(0.09, '#222a36');
+  panelGrad.addColorStop(0.66, '#141e28');
   panelGrad.addColorStop(1, '#0b1018');
   ctx.fillStyle = panelGrad;
   ctx.fillRect(0, py, VIEW.width, VIEW.panelHeight);
-  ctx.fillStyle = '#2d3b4f'; ctx.fillRect(0, py, VIEW.width, 3);
+  ctx.fillStyle = '#9d7964'; ctx.fillRect(0, py, VIEW.width, 2);
   ctx.fillStyle = 'rgba(124, 247, 201, 0.3)'; ctx.fillRect(0, py + 3, VIEW.width, 1);
 
-  // Dials positioned cleanly with 18px clear breathing space above bottom legend strip!
   const dialY = py + 47;
-  const dialR = 36;
+  const dialR = 38;
   drawAttitudeDial(ctx, 198, dialY, dialR, p.pitch, p.roll);
   drawAirspeedDial(ctx, 326, dialY, dialR, p.speed * MS_TO_KTS);
   drawAltimeterDial(ctx, 454, dialY, dialR, Math.max(0, p.y * M_TO_FT));
@@ -439,20 +431,18 @@ export function drawCockpitPanel(ctx, state, options) {
   drawThrottleAndRpm(ctx, 684, py + 12, p.throttle, p.rpm);
   drawAnnunciatorBank(ctx, 840, py + 12, state, options);
 
-  // Left aircraft placard
   ctx.font = `700 10px ${MONO}`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = 'rgba(164, 194, 224, 0.6)'; ctx.fillText('SKYWARD-180', 22, py + 26);
   ctx.fillStyle = '#69f7c4'; ctx.fillText(options.camMode === 'cockpit' ? 'CAM: COCKPIT' : 'CAM: CHASE', 22, py + 45);
   ctx.fillStyle = options.invertPitch ? '#ffd24d' : '#9cc2de'; ctx.fillText(options.invertPitch ? 'PITCH: SIM' : 'PITCH: ARCADE', 22, py + 64);
   ctx.fillStyle = options.muted ? '#ff8b6b' : '#69f7c4'; ctx.fillText(options.muted ? 'AUDIO: MUTE' : 'AUDIO: LIVE', 22, py + 83);
 
-  // Clean bottom controls strip
   ctx.fillStyle = 'rgba(7, 11, 18, 0.85)';
   ctx.fillRect(0, VIEW.height - 19, VIEW.width, 19);
   ctx.fillStyle = 'rgba(124, 247, 201, 0.14)';
   ctx.fillRect(0, VIEW.height - 19, VIEW.width, 1);
   ctx.font = `600 10.5px ${MONO}`;
-  ctx.fillStyle = '#8eb0cd';
+  ctx.fillStyle = '#c1cbd2';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(
@@ -465,18 +455,18 @@ export function drawCockpitPanel(ctx, state, options) {
 
 function drawDialBezel(ctx, cx, cy, r, label) {
   const glow = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r + 6);
-  glow.addColorStop(0, 'rgba(105, 220, 255, 0.16)');
+  glow.addColorStop(0, 'rgba(255, 205, 140, 0.30)');
   glow.addColorStop(1, 'rgba(105, 220, 255, 0)');
   ctx.fillStyle = glow;
   ctx.beginPath(); ctx.arc(cx, cy, r + 6, 0, Math.PI * 2); ctx.fill();
 
   const rim = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-  rim.addColorStop(0, '#4a5e75'); rim.addColorStop(1, '#1a2330');
+  rim.addColorStop(0, '#b89c86'); rim.addColorStop(0.32, '#586271'); rim.addColorStop(1, '#14212d');
   ctx.beginPath(); ctx.arc(cx, cy, r + 3, 0, Math.PI * 2); ctx.fillStyle = rim; ctx.fill();
 
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = '#0d1520'; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = '#131d26'; ctx.fill();
 
-  ctx.font = `700 9px ${MONO}`; ctx.fillStyle = '#92b9d9'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.font = `700 9px ${MONO}`; ctx.fillStyle = '#dfccbb'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.fillText(label, cx, cy + r + 5);
 }
 
@@ -494,8 +484,8 @@ function drawAttitudeDial(ctx, cx, cy, r, pitch, roll) {
   ctx.beginPath(); ctx.arc(cx, cy, r - 1.5, 0, Math.PI * 2); ctx.clip();
   ctx.translate(cx, cy); ctx.rotate(-roll);
   const shift = Math.max(-r * 0.9, Math.min(r * 0.9, pitch * 64));
-  ctx.fillStyle = '#2474b8'; ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 1.5 + shift);
-  ctx.fillStyle = '#8b572a'; ctx.fillRect(-r * 1.5, shift, r * 3, r * 1.5 - shift);
+  ctx.fillStyle = '#307b99'; ctx.fillRect(-r * 1.5, -r * 1.5, r * 3, r * 1.5 + shift);
+  ctx.fillStyle = '#a47750'; ctx.fillRect(-r * 1.5, shift, r * 3, r * 1.5 - shift);
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(-r * 1.4, shift); ctx.lineTo(r * 1.4, shift); ctx.stroke();
   ctx.lineWidth = 1.1;
@@ -555,7 +545,6 @@ function drawAltimeterDial(ctx, cx, cy, r, altFt) {
     ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * (r - 2.5), cy + Math.sin(a) * (r - 2.5)); ctx.lineTo(cx + Math.cos(a) * (r - 7.5), cy + Math.sin(a) * (r - 7.5)); ctx.stroke();
     ctx.fillText(String(i), cx + Math.cos(a) * (r - 14), cy + Math.sin(a) * (r - 14));
   }
-  // Kollsman pressure window neatly centered below hub (zero overlap with numeral 3!)
   ctx.fillStyle = '#182433'; ctx.fillRect(cx - 11, cy + 7.5, 22, 8.5);
   ctx.font = `600 6.5px ${MONO}`; ctx.fillStyle = '#9fd0e8'; ctx.fillText('29.92', cx, cy + 11.8);
 
@@ -623,7 +612,6 @@ function drawAnnunciatorBank(ctx, x, y, state, options) {
   const p = state.plane;
   pill(ctx, x, y, 416, 82, 8, '#0d1520', '#33455c', 1.4);
 
-  // 1. LANDING GEAR (3 green LEDs)
   const gx = x + 16, gy = y + 11;
   ctx.font = `700 9.5px ${MONO}`; ctx.fillStyle = '#8eb3d1'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillText('GEAR [G]', gx, gy + 8);
@@ -640,7 +628,6 @@ function drawAnnunciatorBank(ctx, x, y, state, options) {
   ctx.fillStyle = lockedDown ? '#69f7c4' : state.gearWarn ? '#ff6b6b' : '#7b99b3';
   ctx.fillText(lockedDown ? '3 GREEN' : transiting ? 'TRANSIT' : 'UP', gx, gy + 54);
 
-  // 2. FLAPS
   const fx = x + 104;
   ctx.font = `700 9.5px ${MONO}`; ctx.fillStyle = '#8eb3d1'; ctx.fillText('FLAPS [F]', fx, gy + 8);
   const flapLabels = ['0° UP', '15° APP', '30° LND'];
@@ -651,7 +638,6 @@ function drawAnnunciatorBank(ctx, x, y, state, options) {
     ctx.fillText(flapLabels[i], fx + 6, gy + 25.5 + i * 16);
   }
 
-  // 3. Status Lamps
   const lamps = [
     ['STALL', state.stallWarn, '#e03c3c', '#fff'],
     ['BRAKE', p.braking, '#e69b22', '#0c121a'],
@@ -667,7 +653,6 @@ function drawAnnunciatorBank(ctx, x, y, state, options) {
     ctx.fillText(label, bx + 33, by + 11);
   }
 
-  // 4. Live PAPI Repeater (strictly active during Final Approach; STBY otherwise!)
   const px = x + 340;
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   ctx.font = `700 9px ${MONO}`; ctx.fillStyle = '#8eb3d1'; ctx.fillText('PAPI RWY36', px + 30, gy + 11);
@@ -685,66 +670,62 @@ function drawAnnunciatorBank(ctx, x, y, state, options) {
   ctx.fillText(!showPapi ? 'STBY' : state.papiReds === 2 ? 'ON SLOPE' : state.papiReds < 2 ? 'TOO HIGH' : 'TOO LOW', px + 30, gy + 56);
 }
 
-// ---------------------------------------------------------------- Title / Pause / Debrief Overlays
 export function getTitleButtons() {
   const buttons = [];
-  const cardW = 242, gap = 16, startX = VIEW.horizonX - (cardW * 3 + gap * 2) / 2;
+  const cardW = 174, gap = 8, startX = 132;
   for (let i = 0; i < COURSE_DEFS.length; i += 1) {
-    buttons.push({ id: `course-${i}`, courseIndex: i, x: startX + i * (cardW + gap), y: 472, w: cardW, h: 52 });
+    buttons.push({ id: `course-${i}`, courseIndex: i, x: startX + i * (cardW + gap), y: 457, w: cardW, h: 60 });
   }
-  buttons.push({ id: 'launch', x: VIEW.horizonX - 158, y: 534, w: 316, h: 44 });
+  buttons.push({ id: 'launch', x: startX, y: 528, w: 296, h: 44 });
   return buttons;
 }
 
 export function drawTitleOverlay(ctx, state, bestScores) {
   ctx.save();
-  const rad = ctx.createRadialGradient(VIEW.horizonX, 142, 25, VIEW.horizonX, 142, 290);
-  rad.addColorStop(0, 'rgba(9, 24, 46, 0.56)'); rad.addColorStop(0.55, 'rgba(9, 24, 46, 0.22)'); rad.addColorStop(1, 'rgba(9, 24, 46, 0)');
-  ctx.fillStyle = rad; ctx.fillRect(VIEW.horizonX - 300, 0, 600, 440);
-
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  // High-contrast dark pill behind airfield eyebrow (>11:1 contrast!)
-  pill(ctx, VIEW.horizonX - 102, 87, 204, 20, 10, 'rgba(10, 18, 30, 0.86)', 'rgba(255, 210, 77, 0.65)', 1.1);
-  ctx.font = `700 11.5px ${MONO}`; ctx.fillStyle = '#ffe066';
-  ctx.fillText('PELICAN POINT AIRFIELD', VIEW.horizonX, 97);
-
+  const x = 132;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#ffd79d';
+  ctx.fillRect(x, 134, 37, 1);
+  ctx.font = '700 12px ' + MONO;
+  ctx.fillText('PELICAN POINT AIRFIELD', x + 46, 139);
   ctx.save();
-  ctx.shadowColor = 'rgba(6, 16, 32, 0.8)'; ctx.shadowBlur = 16; ctx.shadowOffsetY = 4;
-  ctx.font = `800 60px ${FONT}`;
-  ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(10, 22, 40, 0.78)';
-  ctx.strokeText('SKYWARD RINGS', VIEW.horizonX, 146);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText('SKYWARD RINGS', VIEW.horizonX, 146);
+  ctx.shadowColor = 'rgba(18,22,42,0.55)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 3;
+  ctx.fillStyle = '#fff1d6';
+  ctx.font = '900 76px ' + FONT;
+  ctx.fillText('SKYWARD', x - 4, 224);
+  ctx.font = 'italic 102px Georgia, serif';
+  ctx.fillText('RINGS', x - 7, 307);
   ctx.restore();
 
-  pill(ctx, VIEW.horizonX - 310, 180, 620, 26, 13, 'rgba(10, 20, 36, 0.82)', 'rgba(255, 224, 102, 0.4)', 1.1);
-  ctx.font = `600 12.5px ${FONT}`; ctx.fillStyle = '#eef7ff';
-  ctx.fillText('Take off from RWY 36 · Carve glowing rings · Land the TDZ  |  [1-3] Course · [M] Mute', VIEW.horizonX, 193);
+  ctx.fillStyle = '#ffcc88'; ctx.font = '700 17px ' + MONO;
+  ctx.letterSpacing = '5px';
+  ctx.fillText('GOLDEN HOUR', x, 352);
+  ctx.letterSpacing = '0px';
+  ctx.fillStyle = '#fff0da'; ctx.font = '600 14px ' + FONT;
+  ctx.fillText('Take off from RWY 36, fly the rings and land in the touchdown zone.', x, 384);
+  ctx.font = '600 11px ' + MONO;
+  ctx.fillText('[1–3] COURSE  /  [M] MUTE', x, 407);
 
   const buttons = getTitleButtons();
+  ctx.textBaseline = 'middle';
   for (let i = 0; i < COURSE_DEFS.length; i += 1) {
     const def = COURSE_DEFS[i], b = buttons[i], sel = state.courseIndex === i;
-    pill(ctx, b.x, b.y, b.w, b.h, 10, sel ? 'rgba(12, 26, 44, 0.94)' : 'rgba(10, 20, 34, 0.84)', sel ? '#ffd24d' : 'rgba(155, 204, 238, 0.42)', sel ? 2.2 : 1.2);
+    pill(ctx, b.x, b.y, b.w, b.h, 3, sel ? '#302c34' : 'rgba(16,24,40,0.91)', sel ? '#ffc57a' : 'rgba(232,207,176,0.42)');
+    if (sel) { ctx.fillStyle = '#ffc57a'; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, 2); }
     ctx.textAlign = 'left';
     ctx.font = `700 10px ${MONO}`; ctx.fillStyle = sel ? '#ffd24d' : '#96c2e4';
-    ctx.fillText(`[${i + 1}] ${def.rings.length} RINGS · ${def.windLabel}`, b.x + 12, b.y + 13);
+    ctx.fillText(`[${i + 1}] ${def.rings.length} RINGS · ${def.windLabel}`, b.x + 12, b.y + 15);
     ctx.font = `700 14.5px ${FONT}`; ctx.fillStyle = '#ffffff';
     ctx.fillText(def.name, b.x + 12, b.y + 30);
     const best = bestScores[def.id] || 0;
     ctx.font = `600 10px ${MONO}`; ctx.fillStyle = best > 0 ? '#69f7c4' : '#9dc0dc';
-    ctx.fillText(best > 0 ? `BEST ${best}` : `PAR ${def.parTime}s`, b.x + 12, b.y + 44);
+    ctx.fillText(best > 0 ? `BEST ${best}` : `PAR ${def.parTime}s`, b.x + 12, b.y + 47);
   }
 
   const cta = buttons[3];
-  const ctaGrad = ctx.createLinearGradient(cta.x, cta.y, cta.x, cta.y + cta.h);
-  ctaGrad.addColorStop(0, '#ffde66'); ctaGrad.addColorStop(1, '#f2a92c');
-  ctx.save();
-  ctx.shadowColor = 'rgba(255, 198, 64, 0.45)'; ctx.shadowBlur = 14;
-  pill(ctx, cta.x, cta.y, cta.w, cta.h, 11, ctaGrad, '#fff2b0', 1.4);
-  ctx.restore();
-  ctx.textAlign = 'center';
-  ctx.font = `800 17px ${FONT}`; ctx.fillStyle = '#111926';
-  ctx.fillText('PRESS SPACE OR CLICK TO FLY', VIEW.horizonX, cta.y + 23);
+  pill(ctx, cta.x, cta.y, cta.w, cta.h, 3, '#ffce8e', '#ffe3b5');
+  ctx.textAlign = 'center'; ctx.font = '800 16px ' + FONT; ctx.fillStyle = '#221d29';
+  ctx.fillText('PRESS SPACE OR CLICK TO FLY', cta.x + cta.w / 2, cta.y + 23);
   ctx.restore();
 }
 
@@ -770,32 +751,40 @@ export function drawPauseOverlay(ctx, options) {
 export function drawSummaryOverlay(ctx, state, bestScore, isNewRecord) {
   const crashed = state.phase === PHASE_CRASHED;
   const offField = !crashed && Boolean(state.offField);
-  const w = 620, h = crashed || offField ? 310 : 426;
-  const x = VIEW.horizonX - w / 2, y = crashed || offField ? 140 : 84;
+  const w = 594, h = crashed || offField ? 310 : 439;
+  const x = crashed || offField ? VIEW.horizonX - w / 2 : 132;
+  const y = crashed || offField ? 140 : 104;
   ctx.save();
-  const borderCol = crashed ? '#ff6b6b' : offField ? '#ffb347' : '#ffd24d';
-  pill(ctx, x, y, w, h, 16, 'rgba(11, 20, 34, 0.92)', borderCol, 2);
+  const borderCol = crashed ? '#ff8779' : offField ? '#ffb347' : '#dcb485';
+  const metal = ctx.createLinearGradient(x, y, x + w, y + h);
+  metal.addColorStop(0, 'rgba(36,34,47,0.98)');
+  metal.addColorStop(1, 'rgba(10,20,33,0.95)');
+  pill(ctx, x, y, w, h, 5, metal, borderCol);
+  ctx.fillStyle = borderCol; ctx.fillRect(x + 1, y + 1, w - 2, 3);
 
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.font = `700 12px ${MONO}`; ctx.fillStyle = crashed ? '#ff8b8b' : offField ? '#ffb347' : '#7cf7c9';
-  ctx.fillText(`${state.course.def.name} · ${crashed ? state.failType || 'FLIGHT FAILED' : offField ? 'EMERGENCY LANDING' : 'FLIGHT RESULTS'}`, x + 28, y + 30);
-  ctx.font = `800 26px ${FONT}`; ctx.fillStyle = '#ffffff';
+  ctx.font = '700 12px ' + MONO; ctx.fillStyle = borderCol;
+  ctx.fillText(state.course.def.name + ' · ' + (crashed ? state.failType || 'FLIGHT FAILED' : offField ? 'EMERGENCY LANDING' : 'FLIGHT RESULTS'), x + 28, y + 30);
+  ctx.font = '800 25px ' + FONT; ctx.fillStyle = '#fff1da';
   ctx.fillText(crashed ? (state.failType || 'FLIGHT TERMINATED') : offField ? 'OFF-FIELD LANDING' : 'TOUCHDOWN COMPLETE', x + 28, y + 62);
 
-  // 1-3 Golden Stars + Pilot Grade Badge (generous spacing clear of title!)
-  const bx = x + w - 58, by = y + 54;
-  const gradeCol = offField ? '#ffb347' : state.grade === 'S' ? '#ffd24d' : state.grade === 'A' ? '#69f7c4' : state.grade === 'B' ? '#68c3ff' : state.grade === 'C' ? '#d4c298' : '#ff6b6b';
-  ctx.beginPath(); ctx.arc(bx, by, 28, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fill();
-  ctx.strokeStyle = gradeCol; ctx.lineWidth = 3; ctx.stroke();
-  ctx.textAlign = 'center'; ctx.font = `800 30px ${FONT}`; ctx.fillStyle = gradeCol;
+  const bx = x + w - 64, by = y + (crashed || offField ? 57 : 83);
+  const gradeCol = offField ? '#ffb347' : state.grade === 'S' ? '#ffe099' : state.grade === 'A' ? '#69f7c4' : state.grade === 'B' ? '#68c3ff' : state.grade === 'C' ? '#d4c298' : '#ff6b6b';
+  const rad = crashed || offField ? 29 : 39;
+  const medal = ctx.createLinearGradient(bx, by - rad, bx, by + rad);
+  medal.addColorStop(0, '#68533f'); medal.addColorStop(1, '#262739');
+  ctx.beginPath(); ctx.arc(bx, by, rad, 0, Math.PI * 2);
+  ctx.fillStyle = medal; ctx.fill();
+  ctx.strokeStyle = gradeCol; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.beginPath(); ctx.arc(bx, by, rad - 5, 0, Math.PI * 2); ctx.stroke();
+  ctx.textAlign = 'center'; ctx.font = 'italic ' + (rad + 5) + 'px Georgia, serif'; ctx.fillStyle = gradeCol;
   ctx.fillText(state.grade, bx, by + 1);
 
   if (!crashed && !offField) {
-    ctx.font = `700 26px ${FONT}`;
-    for (let s = 0; s < 3; s += 1) {
-      ctx.fillStyle = s < state.stars ? '#ffd24d' : 'rgba(165, 194, 220, 0.25)';
-      ctx.fillText('★', bx - 104 + s * 28, by + 1);
+    ctx.font = '700 17px ' + FONT;
+    for (let star = 0; star < 3; star += 1) {
+      ctx.fillStyle = star < state.stars ? '#ffe099' : 'rgba(165,194,220,0.25)';
+      ctx.fillText('★', bx + (star - 1) * 19, by + rad + 16);
     }
   }
 
@@ -826,27 +815,24 @@ export function drawSummaryOverlay(ctx, state, bestScore, isNewRecord) {
       [`TOUCHDOWN (${rep.zoneLabel} · ${rep.centerOffset}m OFF CL)`, `+${state.tdzBonus}`, rep.inTdz ? '#69f7c4' : '#ffd24d'],
       [`TIME BONUS (${fmtClock(state.flightTime)} · PAR ${state.course.def.parTime}+${state.ringTimeBonusSec}s)`, `+${state.timeBonus}`, '#9fd8ff'],
     ];
-    let ry = y + 114;
+    ctx.textAlign = 'left';
+    ctx.font = '800 62px ' + FONT; ctx.fillStyle = '#ffdb9d';
+    ctx.fillText(state.totalScore.toLocaleString('en-US'), x + 26, y + 113);
+    ctx.font = '700 11px ' + MONO; ctx.fillStyle = '#ecd3b7';
+    ctx.fillText(isNewRecord ? 'TOTAL SCORE  ·  NEW RECORD!' : 'TOTAL SCORE  ·  BEST ' + bestScore, x + 28, y + 155);
+    let ry = y + 190;
     for (const [label, pts, col] of rows) {
-      pill(ctx, x + 26, ry - 15, w - 52, 33, 7, 'rgba(255, 255, 255, 0.05)', null);
-      ctx.textAlign = 'left'; ctx.font = `600 12.2px ${MONO}`; ctx.fillStyle = '#dcebfa'; ctx.fillText(label, x + 38, ry + 1);
-      ctx.textAlign = 'right'; ctx.font = `700 15px ${MONO}`; ctx.fillStyle = col; ctx.fillText(pts, x + w - 38, ry + 1);
-      ry += 41;
+      ctx.fillStyle = 'rgba(242,216,184,0.18)'; ctx.fillRect(x + 28, ry - 15, w - 56, 1);
+      ctx.textAlign = 'left'; ctx.font = '600 12.2px ' + MONO; ctx.fillStyle = '#efebeb'; ctx.fillText(label, x + 30, ry + 1);
+      ctx.textAlign = 'right'; ctx.font = '700 15px ' + MONO; ctx.fillStyle = col; ctx.fillText(pts, x + w - 30, ry + 1);
+      ry += 39;
     }
-    ctx.textAlign = 'left'; ctx.font = `600 11.5px ${MONO}`; ctx.fillStyle = '#9ac0dc';
-    ctx.fillText(`STATS: AVG ${rep.avgKts} KTS  ·  MAX ${rep.maxKts} KTS  ·  BEST STREAK ×${state.bestStreak}  ·  ${state.stars}/3 STARS`, x + 30, ry + 4);
-    ry += 22;
-
-    ctx.strokeStyle = 'rgba(255, 210, 77, 0.45)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x + 28, ry); ctx.lineTo(x + w - 28, ry); ctx.stroke();
-    ctx.font = `700 14px ${MONO}`; ctx.fillStyle = '#a4c4df';
-    ctx.fillText(isNewRecord ? 'TOTAL SCORE  ·  NEW RECORD!' : `TOTAL SCORE  ·  BEST ${bestScore}`, x + 28, ry + 23);
-    ctx.textAlign = 'right'; ctx.font = `800 30px ${MONO}`; ctx.fillStyle = '#ffd24d';
-    ctx.fillText(String(state.totalScore), x + w - 28, ry + 23);
+    ctx.textAlign = 'left'; ctx.font = '600 11.5px ' + MONO; ctx.fillStyle = '#ccc6c9';
+    ctx.fillText(`STATS: AVG ${rep.avgKts} KTS  ·  MAX ${rep.maxKts} KTS  ·  BEST STREAK ×${state.bestStreak}  ·  ${state.stars}/3 STARS`, x + 30, ry + 5);
   }
 
   const btnY = y + h - 52;
-  pill(ctx, x + 28, btnY, 270, 38, 9, '#ffd24d', null);
+  pill(ctx, x + 28, btnY, 270, 38, 3, '#ffce8e', null);
   ctx.textAlign = 'center'; ctx.font = `800 14px ${FONT}`; ctx.fillStyle = '#111a28';
   ctx.fillText(crashed || offField ? 'SPACE / CLICK · RETRY FLIGHT' : 'SPACE / CLICK · FLY AGAIN', x + 163, btnY + 20);
   ctx.textAlign = 'right'; ctx.font = `600 12px ${MONO}`; ctx.fillStyle = '#9cc2de';

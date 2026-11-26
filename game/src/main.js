@@ -80,6 +80,7 @@ function runShot(name) {
   const courseId = world.state.course.def.id;
   const bestScores = scene.bestScore > 0 ? { [courseId]: scene.bestScore } : {};
   const opts = {
+    shot: name,
     stallSpeed: world.stallSpeedOf(world.state.plane),
     camMode: cam.mode,
     invertPitch: false,
