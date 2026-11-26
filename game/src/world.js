@@ -630,11 +630,11 @@ export function createWorld(randomFactory, courseIndex = 0) {
       state.gearWarn = state.phase === PHASE_APPROACH && !p.gearDown && p.y < 58;
 
       // Ground / Terrain / Water contact check!
-      const gndY = terrainHeight(p.x, p.z);
+      const waterKind = waterKindAt(p.x, p.z);
+      const gndY = waterKind ? 0 : terrainHeight(p.x, p.z);
       if (p.y <= gndY) {
         const sinkFpm = Math.max(0, -p.vy) * MS_TO_FPM;
         const touchKts = Math.round(p.speed * MS_TO_KTS);
-        const waterKind = waterKindAt(p.x, p.z);
         const onRwy = gndY === 0 && !waterKind && isOnRunway(p.x, p.z);
 
         if (waterKind) {
