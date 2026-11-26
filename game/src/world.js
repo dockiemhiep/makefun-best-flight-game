@@ -2,7 +2,7 @@
 // wingtip trails and particle pools. Zero DOM or Canvas dependencies.
 
 import { FLIGHT, LANDING, M_TO_FT, MS_TO_FPM, MS_TO_KTS, RING, RUNWAY } from './config.js';
-import { buildCourseWorld, coastX, terrainHeight } from './courses.js';
+import { buildCourseWorld, coastX, riverCenterZ, riverHalfWidth, terrainHeight } from './courses.js';
 
 export const PHASE_TAKEOFF = 'takeoff';
 export const PHASE_COURSE = 'course';
@@ -65,6 +65,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
     totalScore: 0,
     grade: 'B',
     stars: 0,
+    offField: false,
     landingReport: null,
     failType: '',
     crashReason: '',
@@ -163,6 +164,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
     state.totalScore = 0;
     state.grade = 'B';
     state.stars = 0;
+    state.offField = false;
     state.landingReport = null;
     state.failType = '';
     state.crashReason = '';
@@ -207,9 +209,10 @@ export function createWorld(randomFactory, courseIndex = 0) {
     return Math.abs(x - RUNWAY.x) <= RUNWAY.width * 0.56 && z >= RUNWAY.zStart - 12 && z <= RUNWAY.zEnd + 16;
   }
 
-  function isOverWater(x, z) {
-    if (x > coastX(z) + 18) return true;
-    return false;
+  function waterKindAt(x, z) {
+    if (x > coastX(z) + 18) return 'sea';
+    if (x >= -1700 && x <= 620 && Math.abs(z - riverCenterZ(x)) <= riverHalfWidth(x)) return 'river';
+    return null;
   }
 
   function advanceRing(missed) {
@@ -236,9 +239,33 @@ export function createWorld(randomFactory, courseIndex = 0) {
     state.phase = PHASE_COMPLETE;
     const p = state.plane;
     const fpm = p.touchdownFpm;
-    const inTdz = p.touchdownZ >= RUNWAY.tdzStart && p.touchdownZ <= RUNWAY.tdzEnd && Math.abs(p.touchdownX) <= RUNWAY.width * 0.5;
     const onRwy = isOnRunway(p.touchdownX, p.touchdownZ);
+    const inTdz = onRwy && p.touchdownZ >= RUNWAY.tdzStart && p.touchdownZ <= RUNWAY.tdzEnd && Math.abs(p.touchdownX) <= RUNWAY.width * 0.5;
+    const avgKts = state.speedSamples > 0 ? Math.round((state.speedSum / state.speedSamples) * MS_TO_KTS) : 0;
 
+    if (!onRwy) {
+      // Off-field landing: distinct outcome, not normal runway mission completion
+      state.offField = true;
+      state.landingScore = 0;
+      state.tdzBonus = 0;
+      state.timeBonus = 0;
+      state.totalScore = state.ringScore;
+      state.grade = '—';
+      state.stars = 0;
+      state.landingReport = {
+        smoothLabel: 'OFF-FIELD',
+        fpm: Math.round(fpm),
+        inTdz: false,
+        onRwy: false,
+        centerOffset: Math.round(Math.abs(p.touchdownX) * 10) / 10,
+        zoneLabel: 'OFF-FIELD (MISSED RWY 36)',
+        avgKts,
+        maxKts: Math.round(state.maxSpeedKts),
+      };
+      return;
+    }
+
+    state.offField = false;
     let smoothLabel = 'FIRM';
     let smoothScore = 450;
     if (fpm <= LANDING.butterFpm) {
@@ -254,27 +281,27 @@ export function createWorld(randomFactory, courseIndex = 0) {
       smoothLabel = 'HARD';
       smoothScore = Math.round(160 + ((LANDING.maxSafeFpm - Math.min(fpm, LANDING.maxSafeFpm)) / (LANDING.maxSafeFpm - LANDING.firmFpm)) * 240);
     }
-    // Slight wing-level bonus/penalty
     const levelFactor = clamp(1 - Math.abs(p.touchdownRoll) * 0.8, 0.72, 1);
     state.landingScore = Math.round(smoothScore * levelFactor);
 
     const centerAcc = clamp(1 - Math.abs(p.touchdownX) / (RUNWAY.width * 0.45), 0, 1);
-    if (inTdz) {
-      state.tdzBonus = LANDING.tdzBonus + Math.round(centerAcc * LANDING.centerlineBonus);
-    } else if (onRwy) {
-      state.tdzBonus = Math.round(180 + centerAcc * 140);
-    } else {
-      state.tdzBonus = 0;
-    }
+    state.tdzBonus = inTdz
+      ? LANDING.tdzBonus + Math.round(centerAcc * LANDING.centerlineBonus)
+      : Math.round(180 + centerAcc * 140);
 
     const par = state.course.def.parTime + state.ringTimeBonusSec;
-    const delta = par - state.flightTime;
-    state.timeBonus = Math.round(clamp(420 + delta * 14, 0, LANDING.timeBonusMax));
-
+    state.timeBonus = Math.round(clamp(420 + (par - state.flightTime) * 14, 0, LANDING.timeBonusMax));
     state.totalScore = state.ringScore + state.landingScore + state.tdzBonus + state.timeBonus;
 
     const ringCount = state.course.rings.length;
-    const maxTheoretical = ringCount * (RING.passPoints + RING.bullseyeBonus) + 2550;
+    const maxStreak = RING.streakStep * ((ringCount * (ringCount - 1)) / 2);
+    const maxTheoretical =
+      ringCount * (RING.passPoints + RING.bullseyeBonus) +
+      maxStreak +
+      LANDING.smoothMax +
+      LANDING.tdzBonus +
+      LANDING.centerlineBonus +
+      LANDING.timeBonusMax;
     const ratio = state.totalScore / maxTheoretical;
     if (ratio >= 0.74 && state.ringsHit >= ringCount - 1 && inTdz && fpm <= LANDING.smoothFpm) state.grade = 'S';
     else if (ratio >= 0.56) state.grade = 'A';
@@ -286,14 +313,13 @@ export function createWorld(randomFactory, courseIndex = 0) {
       : state.grade === 'A' || state.grade === 'B' ? 2
       : 1;
 
-    const avgKts = state.speedSamples > 0 ? Math.round((state.speedSum / state.speedSamples) * MS_TO_KTS) : 0;
     state.landingReport = {
       smoothLabel,
       fpm: Math.round(fpm),
       inTdz,
       onRwy,
       centerOffset: Math.round(Math.abs(p.touchdownX) * 10) / 10,
-      zoneLabel: inTdz ? 'TOUCHDOWN ZONE' : onRwy ? 'RUNWAY (OUTSIDE TDZ)' : 'OFF-RUNWAY',
+      zoneLabel: inTdz ? 'TOUCHDOWN ZONE' : 'RUNWAY (OUTSIDE TDZ)',
       avgKts,
       maxKts: Math.round(state.maxSpeedKts),
     };
@@ -376,7 +402,8 @@ export function createWorld(randomFactory, courseIndex = 0) {
       p.flaps = (p.flaps + 1) % 3;
       events |= EVT_FLAPS;
       const lbl = p.flaps === 0 ? 'FLAPS UP (0°)' : p.flaps === 1 ? 'FLAPS APPROACH (15°)' : 'FLAPS LANDING (30°)';
-      showBanner(lbl, p.flaps === 2 ? 'Low stall speed 34 KTS' : p.flaps === 1 ? 'Extra lift · Stall 40 KTS' : 'High-speed cruise config', '#ffd24d', 1.3);
+      const stallKts = formatKts(stallSpeedOf(p));
+      showBanner(lbl, p.flaps === 2 ? `Low stall speed ${stallKts} KTS` : p.flaps === 1 ? `Extra lift · Stall ${stallKts} KTS` : `Cruise config · Stall ${stallKts} KTS`, '#ffd24d', 1.3);
     }
 
     // Smooth actuator animations
@@ -451,7 +478,7 @@ export function createWorld(randomFactory, courseIndex = 0) {
         p.vy = Math.sin(p.pitch) * p.speed;
         if (state.phase === PHASE_TAKEOFF) {
           state.phase = PHASE_COURSE;
-          showBanner('AIRBORNE!', 'Fly through all 12 glowing rings · Gear Up [G]', '#ffd24d', 2.4);
+          showBanner('AIRBORNE!', `Fly through all ${state.course.rings.length} glowing rings · Gear Up [G]`, '#ffd24d', 2.4);
         } else if (state.phase === PHASE_ROLLOUT) {
           // Go-around!
           state.phase = PHASE_APPROACH;
@@ -469,9 +496,10 @@ export function createWorld(randomFactory, courseIndex = 0) {
         events |= EVT_COMPLETE;
       }
 
-      // Check running into the ocean off-runway
-      if (isOverWater(p.x, p.z)) {
-        triggerCrash('WATER CRASH', 'Ran off the coast into the sea', true);
+      // Check running into the sea or river off-runway
+      const waterKind = waterKindAt(p.x, p.z);
+      if (waterKind) {
+        triggerCrash('WATER CRASH', waterKind === 'river' ? 'Ran off into the river!' : 'Ran off the coast into the sea!', true);
         events |= EVT_CRASH;
       }
       state.stallWarn = false;
@@ -588,12 +616,12 @@ export function createWorld(randomFactory, courseIndex = 0) {
       if (p.y <= gndY) {
         const sinkFpm = Math.max(0, -p.vy) * MS_TO_FPM;
         const touchKts = Math.round(p.speed * MS_TO_KTS);
-        const inWater = isOverWater(p.x, p.z);
-        const onRwy = gndY === 0 && isOnRunway(p.x, p.z);
+        const waterKind = waterKindAt(p.x, p.z);
+        const onRwy = gndY === 0 && !waterKind && isOnRunway(p.x, p.z);
 
-        if (inWater) {
+        if (waterKind) {
           p.y = 0;
-          triggerCrash('WATER CRASH', 'Crashed into the coastal bay — watch your altitude over water!', true);
+          triggerCrash('WATER CRASH', waterKind === 'river' ? 'Crashed into the river — watch your altitude over water!' : 'Crashed into the coastal bay — watch your altitude over water!', true);
           events |= EVT_CRASH;
         } else if (gndY > 1) {
           p.y = gndY;
@@ -628,37 +656,29 @@ export function createWorld(randomFactory, courseIndex = 0) {
           p.roll = 0;
           events |= EVT_TOUCHDOWN;
 
-          // Tire smoke puffs!
           for (let i = 0; i < 12; i += 1) {
-            spawnParticle(
-              'smoke',
-              p.x + (i % 2 === 0 ? -1.8 : 1.8),
-              0.4,
-              p.z,
-              (Math.sin(i * 2.1)) * 2.5,
-              1.4 + (i % 3) * 0.6,
-              -p.vz * 0.15,
-              0.85,
-              5,
-              'rgba(242, 246, 250, 0.8)',
-            );
+            spawnParticle('smoke', p.x + (i % 2 === 0 ? -1.8 : 1.8), 0.4, p.z, Math.sin(i * 2.1) * 2.5, 1.4 + (i % 3) * 0.6, -p.vz * 0.15, 0.85, 5, 'rgba(242, 246, 250, 0.8)');
           }
 
           if (state.phase === PHASE_APPROACH || state.activeRing >= state.course.rings.length) {
             state.phase = PHASE_ROLLOUT;
-            const inTdz = p.z >= RUNWAY.tdzStart && p.z <= RUNWAY.tdzEnd && onRwy;
-            const gradeTxt =
-              sinkFpm <= LANDING.butterFpm
-                ? `BUTTER TOUCHDOWN! -${Math.round(sinkFpm)} FPM`
-                : sinkFpm <= LANDING.smoothFpm
-                  ? `SMOOTH TOUCHDOWN · -${Math.round(sinkFpm)} FPM`
-                  : `TOUCHDOWN · -${Math.round(sinkFpm)} FPM`;
-            showBanner(
-              gradeTxt,
-              inTdz ? 'Inside Touchdown Zone! Hold [SPACE] to brake to a stop' : 'Hold [SPACE] to brake to a stop',
-              sinkFpm <= LANDING.smoothFpm ? '#69f7c4' : '#ffd24d',
-              3.2,
-            );
+            if (!onRwy) {
+              showBanner('OFF-FIELD TOUCHDOWN', 'Missed Runway 36 · Hold [SPACE] to stop', '#ffb347', 3.2);
+            } else {
+              const inTdz = p.z >= RUNWAY.tdzStart && p.z <= RUNWAY.tdzEnd;
+              const gradeTxt =
+                sinkFpm <= LANDING.butterFpm
+                  ? `BUTTER TOUCHDOWN! -${Math.round(sinkFpm)} FPM`
+                  : sinkFpm <= LANDING.smoothFpm
+                    ? `SMOOTH TOUCHDOWN · -${Math.round(sinkFpm)} FPM`
+                    : `TOUCHDOWN · -${Math.round(sinkFpm)} FPM`;
+              showBanner(
+                gradeTxt,
+                inTdz ? 'Inside Touchdown Zone! Hold [SPACE] to brake to a stop' : 'Hold [SPACE] to brake to a stop',
+                sinkFpm <= LANDING.smoothFpm ? '#69f7c4' : '#ffd24d',
+                3.2,
+              );
+            }
           } else {
             // Touched down early on runway during takeoff
             if (!onRwy) {
@@ -700,21 +720,10 @@ export function createWorld(randomFactory, courseIndex = 0) {
         state.ringScore += pts;
         state.ringTimeBonusSec += RING.timeBonusSec;
 
-        for (let i = 0; i < (bullseye ? 28 : 18); i += 1) {
-          const a = (i / (bullseye ? 28 : 18)) * Math.PI * 2;
-          const spd = 12 + (i % 4) * 5;
-          spawnParticle(
-            'spark',
-            ring.x + Math.cos(a) * RING.radius * 0.65,
-            ring.y + Math.sin(a) * RING.radius * 0.65,
-            ring.z,
-            Math.cos(a) * spd,
-            Math.sin(a) * spd,
-            (i % 2 === 0 ? 1 : -1) * 8,
-            0.75 + (i % 3) * 0.18,
-            bullseye ? 6.5 : 5,
-            bullseye ? '#fff08a' : '#7df7d4',
-          );
+        const nSparks = bullseye ? 28 : 18;
+        for (let i = 0; i < nSparks; i += 1) {
+          const a = (i / nSparks) * Math.PI * 2, spd = 12 + (i % 4) * 5;
+          spawnParticle('spark', ring.x + Math.cos(a) * RING.radius * 0.65, ring.y + Math.sin(a) * RING.radius * 0.65, ring.z, Math.cos(a) * spd, Math.sin(a) * spd, (i % 2 === 0 ? 1 : -1) * 8, 0.75 + (i % 3) * 0.18, bullseye ? 6.5 : 5, bullseye ? '#fff08a' : '#7df7d4');
         }
 
         const sub = `Streak ×${state.streak} · +${RING.timeBonusSec}s Time Bonus · ${ring.label}`;

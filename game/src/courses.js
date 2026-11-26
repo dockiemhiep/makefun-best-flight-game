@@ -148,6 +148,11 @@ export function riverCenterZ(x) {
   return 1180 + Math.sin(x * 0.0034 + 0.5) * 160 + Math.cos(x * 0.0072) * 55;
 }
 
+/** Half-width of the rendered Azure River channel at world X (meters). */
+export function riverHalfWidth(x) {
+  return x > 180 ? 54 + (x - 180) * 0.22 : 46 + Math.sin(x * 0.004) * 10;
+}
+
 /** Deterministic terrain elevation (meters): 0 on sea/river/runway/valley, rising on inland mountain ridge. */
 export function terrainHeight(x, z) {
   if (x > coastX(z) - 25) return 0;
@@ -256,8 +261,7 @@ export function buildCourseWorld(courseIndex, random) {
   for (let x = -1700; x <= 620; x += 95) riverXs.push(x);
   for (let i = 0; i < riverXs.length - 1; i += 1) {
     const x0 = riverXs[i], x1 = riverXs[i + 1], z0 = riverCenterZ(x0), z1 = riverCenterZ(x1);
-    const w0 = x0 > 180 ? 54 + (x0 - 180) * 0.22 : 46 + Math.sin(x0 * 0.004) * 10;
-    const w1 = x1 > 180 ? 54 + (x1 - 180) * 0.22 : 46 + Math.sin(x1 * 0.004) * 10;
+    const w0 = riverHalfWidth(x0), w1 = riverHalfWidth(x1);
     riverSegments.push({
       bank: [[x0, 0, z0 - w0 - 12], [x1, 0, z1 - w1 - 12], [x1, 0, z1 + w1 + 12], [x0, 0, z0 + w0 + 12]],
       water: [[x0, 0, z0 - w0], [x1, 0, z1 - w1], [x1, 0, z1 + w1], [x0, 0, z0 + w0]],

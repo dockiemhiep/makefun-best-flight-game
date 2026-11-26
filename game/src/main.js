@@ -29,8 +29,6 @@ import {
 import {
   ACT_CAM,
   ACT_CONFIRM,
-  ACT_FLAPS,
-  ACT_GEAR,
   ACT_INVERT,
   ACT_MUTE,
   ACT_PAUSE,
@@ -124,6 +122,7 @@ function runGame() {
       syncCameraToPlane(cam, world.state.plane, STEP);
       if (world.state.plane.z > 475) break;
     }
+    input.clearFlightQueue();
     screen = SCREEN_TITLE;
     announce(`Skyward Rings. ${world.state.course.def.name}. Press Space or click to fly.`);
   }
@@ -132,6 +131,7 @@ function runGame() {
     audio.ensureStarted();
     world.setCourse(courseIndex);
     syncCameraToPlane(cam, world.state.plane, STEP);
+    input.clearFlightQueue();
     isNewRecord = false;
     accumulator = 0;
     screen = SCREEN_PLAY;
@@ -140,9 +140,10 @@ function runGame() {
 
   function finishFlight() {
     screen = SCREEN_OVER;
+    input.clearFlightQueue();
     const id = world.state.course.def.id;
     const prev = bestScores[id] || 0;
-    if (world.state.totalScore > prev && world.state.grade !== 'D') {
+    if (world.state.totalScore > prev && !world.state.offField && world.state.grade !== 'D') {
       bestScores[id] = world.state.totalScore;
       saveBest(id, world.state.totalScore);
       isNewRecord = true;
@@ -150,7 +151,9 @@ function runGame() {
     announce(
       world.state.grade === 'D'
         ? `Flight terminated. ${world.state.crashReason}`
-        : `Touchdown complete! Grade ${world.state.grade}. Score ${world.state.totalScore}.`,
+        : world.state.offField
+          ? `Off-field landing. Land on Runway 36 to complete the mission. Ring score ${world.state.totalScore}.`
+          : `Touchdown complete! Grade ${world.state.grade}. Score ${world.state.totalScore}.`,
     );
   }
 
@@ -210,8 +213,9 @@ function runGame() {
       return;
     }
 
-    // Active play screen one-shot actions
+    // Active play screen one-shot UI actions (gear/flaps stay queued until consumed by a physics tick)
     if (actions & ACT_PAUSE) {
+      input.clearFlightQueue();
       screen = SCREEN_PAUSED;
       announce('Flight paused.');
       return;
@@ -220,19 +224,17 @@ function runGame() {
       startFlight();
       return;
     }
-
-    return actions;
   }
 
-  function stepPlay(queuedActions) {
+  function stepPlay() {
     const flight = input.readFlight(invertPitch);
     const ctrl = {
       pitch: flight.pitch,
       roll: flight.roll,
       throttleDelta: flight.throttleDelta,
       brake: flight.brake,
-      toggleGear: Boolean(queuedActions & ACT_GEAR),
-      cycleFlaps: Boolean(queuedActions & ACT_FLAPS),
+      toggleGear: input.consumeGear(),
+      cycleFlaps: input.consumeFlaps(),
     };
     const ev = world.step(STEP, ctrl);
     syncCameraToPlane(cam, world.state.plane, STEP);
@@ -262,9 +264,10 @@ function runGame() {
     accumulator += dt;
     last = now;
 
-    let oneShot = handleActions() || 0;
+    handleActions();
 
     if (screen === SCREEN_TITLE) {
+      input.clearFlightQueue();
       while (accumulator >= STEP) {
         const ev = world.step(STEP, computeAutopilot(world));
         syncCameraToPlane(cam, world.state.plane, STEP);
@@ -274,12 +277,12 @@ function runGame() {
       audio.update(world.state.plane, false, false, false, dt);
     } else if (screen === SCREEN_PLAY) {
       while (accumulator >= STEP && screen === SCREEN_PLAY) {
-        stepPlay(oneShot);
-        oneShot = 0;
+        stepPlay();
         accumulator -= STEP;
       }
       audio.update(world.state.plane, true, world.state.stallWarn, world.state.gearWarn, dt);
     } else {
+      input.clearFlightQueue();
       accumulator = 0;
       audio.update(world.state.plane, false, false, false, dt);
     }

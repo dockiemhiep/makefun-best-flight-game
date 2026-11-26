@@ -1,6 +1,6 @@
 // Deterministic autopilot & screenshot staging for ?shot=title|chase|approach|results.
-// Every staged frame is produced exclusively by stepping the real flight simulation
-// with identical player inputs — zero hand-placed states and zero faked HUD numbers.
+// Every staged frame is produced by stepping the real flight simulation via a proportional
+// autopilot (continuous pitch/roll/throttleSet + discrete gear/flaps/brake) — no faked HUD values.
 
 import { FLIGHT, RUNWAY, STEP } from './config.js';
 import {
@@ -19,7 +19,7 @@ function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** Smooth proportional flight autopilot driving the exact same control surface inputs a player uses. */
+/** Proportional autopilot generating continuous stick/throttle targets + discrete gear/flaps/brake. */
 export function computeAutopilot(world) {
   const state = world.state;
   const p = state.plane;
